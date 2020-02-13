@@ -41,6 +41,7 @@ def update_geometry(u_, beta_, phi0, beta0, thickness, Thickness_dynamic):
     b0 = -0.5*(grad(phi0).T*grad(d0) + grad(d0).T*grad(phi0))
     a0_contra = inv(a0)
     j0 = det(a0)
+    H = project(inner(a0_contra,b0),FunctionSpace(mesh,'DG',0))
     
     # The membrane, bending, and shear strain measures of the Naghdi model
     e = lambda F: 0.5*(F.T*F - a0)
@@ -48,16 +49,18 @@ def update_geometry(u_, beta_, phi0, beta0, thickness, Thickness_dynamic):
     gamma = lambda F, d: F.T*d - grad(phi0).T*d0
     if Thickness_dynamic:
         D_Delta= inner(a0_contra,e(F))
-        thickness = project(thickness*(1-dt*D_Delta),V_thickness)
-    
+        thickness = project(thickness*(1-dt*D_Delta)- dt*thickness*kd+dt*vp*(1-H*thickness/2),V_thickness)
+        
     # Contravariant Hooke's tensor
     i, j, l, m = Index(), Index(), Index(), Index()
     A_ = as_tensor((0.5*a0_contra[i,j]*a0_contra[l,m]
                     + 0.25*(a0_contra[i,l]*a0_contra[j,m] + a0_contra[i,m]*a0_contra[j,l]))
                     ,[i,j,l,m])
-    # Stress
-    N = thickness*mu*as_tensor(A_[i,j,l,m]*e(F)[l,m], [i,j])
-    M = (thickness**3/3.0)*mu*as_tensor(A_[i,j,l,m]*k(F,d)[l,m],[i,j])
+     # Stress
+    # N = thickness*mu*as_tensor(A_[i,j,l,m]*e(F)[l,m], [i,j])
+    N = thickness*mu*as_tensor(A_[i,j,l,m]*e(F)[l,m]+a0_contra[i,j]*(kd-vp/thickness), [i,j])
+    # M = (thickness**3/3.0)*mu*as_tensor(A_[i,j,l,m]*k(F,d)[l,m],[i,j])
+    M = (thickness**3/3.0)*mu*as_tensor(A_[i,j,l,m]*k(F,d)[l,m]+(H*a0_contra[i,j]-b0[i,j])*(kd-vp/thickness),[i,j])
     T = thickness*mu*as_tensor(a0_contra[i,j]*gamma(F,d)[j], [i])
     # Energy densities
     psi_m = 0.5*inner(N, e(F))
@@ -69,7 +72,7 @@ def update_geometry(u_, beta_, phi0, beta0, thickness, Thickness_dynamic):
     alpha = project(t**2/h**2, FunctionSpace(mesh,'DG',0))
     u_1, u_2, u_3 = split(u_)
     # External work
-    Force = 100.
+    Force = 100.0001
     # W_Force = Force*u_3*thickness (If multiply by the thickness we need to rescale the force)
     W_Force = Force*u_3
 
@@ -124,7 +127,7 @@ def save_plots (ii):
 def update_mesh(phi,u_):
     vm = inner(normal(phi),u_)*normal(phi)
     return vm
-
+    
 # ======================================================
 # Clamped viscous shell plate under uniform force
 # ======================================================
@@ -202,10 +205,12 @@ if not os.path.exists(output_dir_t):
 # the 2D constitutive equation in plane-stress::
 
 L = 1.
-E, nu = 2.0685E7, 0.3
+# E, nu = 2.0685E7, 0.3
 mu = 1.0E7
-#E/(2.0*(1.0 + nu))
+# E/(2.0*(1.0 + nu))
 t = Constant(0.03)
+kd = 20.0e-3
+vp = 1.0e-3
 
 # The midplane of the initial (stress-free) configuration
 # :math:`{\mit \Phi_0}` of the shell is given in the form of an analytical
@@ -364,7 +369,7 @@ problem = NonlinearProblemPointSource(dPi, J, bcs)
 # results to disk::
 
 solver = NewtonSolver()
-solver.parameters['error_on_nonconvergence'] = False
+#solver.parameters['error_on_nonconvergence'] = False
 solver.parameters['maximum_iterations'] = 50
 #solver.parameters['linear_solver'] = "mumps"
 solver.parameters['absolute_tolerance'] = 1E-6
@@ -382,12 +387,12 @@ q_.assign(project(Constant((0,0,0,0,0)), Q))
 ii=0
 time = 0.0
 dt = 1.E-0  # time step
-loop_size = 600
+loop_size = 400
 Time = loop_size*dt
-displacement=np.zeros(loop_size+1)
+displacement=np.zeros(loop_size)
+min_thickness = np.zeros(loop_size)
 displacement_0=phi0(0.0,L/2)[2]
 while (time < Time):
-    print(min(thickness.vector()))
     (niter,cond) = solver.solve(problem, q_.vector())
     
     # Update geometry
@@ -406,7 +411,7 @@ while (time < Time):
     time += dt
 
 # We can plot the final configuration of the shell
-plot_shell(phi)
+#plot_shell(phi)
 #plt.figure()
 #c=plot(phi[2], cmap='RdGy', mode = 'color',vmin=-.5, vmax=0)
 #plt.colorbar(c)
