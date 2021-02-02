@@ -7,7 +7,7 @@ from dolfin import *
 from ufl import Index, unit_vector, shape, Jacobian
 from mshr import *
 from mpl_toolkits.mplot3d import Axes3D
-# from adapt_fix import adapt
+from adapt_fix import adapt
 import subprocess
 
 import meshio
