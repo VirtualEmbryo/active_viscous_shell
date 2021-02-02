@@ -404,7 +404,9 @@ class NonlinearProblem_metric_from_mesh:
 #        self.q_t = TrialFunction(adapt(self.q_t, self.mesh))
 
         self.q_t, self.q = TrialFunction(self.Q), TestFunction(self.Q)
-        self.u_, self.beta_ = split(self.q_)
+#        self.u_, self.beta_ = split(self.q_)
+        self.u_, self.beta_, self.lbda_ , self.rigid_ = split(self.q_)
+
     
         self.set_local_frame()
         self.set_director()
@@ -472,9 +474,25 @@ bcs = [bc_sphere_disp]
 
 
 time = 0
-Time = 5
+Time = 50
 dt = 1.E-0
-i = 1
+
+for i in range(2):
+    (niter,cond) = problem.solve(bcs)
+#     print("Converged in {} newton steps".format(niter))
+    problem.evolution(dt)
+    problem.write(time, u = False, beta = False, phi = False, frame = True, epaisseur = True, activity = True, energies = False)
+    time +=dt
+    current_volume = assemble(1.*problem.dx(domain=problem.mesh))/3
+    print("Current volume:", current_volume)
+
+problem.mesh_refinement()
+print("From here it should be a new problem...")
+
+# Re-definition of the boundary for the new mesh
+bc_sphere_disp = DirichletBC(problem.Q.sub(0).sub(2), project(Constant(0.), problem.Q.sub(0).sub(2).collapse()), boundary)
+bcs = [bc_sphere_disp]
+
 while (time < Time):
     (niter,cond) = problem.solve(bcs)
 #     print("Converged in {} newton steps".format(niter))
@@ -485,13 +503,4 @@ while (time < Time):
     current_volume = assemble(1.*problem.dx(domain=problem.mesh))/3
 
     print("Current volume:", current_volume)
-
-problem.mesh_refinement()
-print("From here it should be a new problem...")
-
-bc_sphere_disp = DirichletBC(problem.Q.sub(0).sub(2), project(Constant(0.), problem.Q.sub(0).sub(2).collapse()), boundary)
-bcs = [bc_sphere_disp]
-problem.write(time, u = False, beta = False, phi = False, frame = True, epaisseur = True, activity = True, energies = False)
-(niter,cond) = problem.solve(bcs)
-
 print("The end")
