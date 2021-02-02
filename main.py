@@ -1,436 +1,497 @@
-# We can visualize the shell shape and its normal with this
-# utility function::
-
-def plot_shell(y,n=None):
-    y_0, y_1, y_2 = y.split(deepcopy=True)
-    fig = plt.figure()
-    ax = fig.gca(projection='3d')
-    ax.plot_trisurf(y_0.compute_vertex_values(),
-                    y_1.compute_vertex_values(),
-                    y_2.compute_vertex_values(),
-                    triangles=y.function_space().mesh().cells(),
-                    linewidth=1, antialiased=True, shade = False)
-    if n:
-        n_0, n_1, n_2 = n.split(deepcopy=True)
-        ax.quiver(y_0.compute_vertex_values(),
-              y_1.compute_vertex_values(),
-              y_2.compute_vertex_values(),
-              n_0.compute_vertex_values(),
-              n_1.compute_vertex_values(),
-              n_2.compute_vertex_values(),
-              length = .2, color = "r")
-    ax.view_init(elev=45, azim=120)
-    ax.set_xlim(-L, L)
-    ax.set_ylim(-L, L)
-    ax.set_zlim(-.5, .1)
-    plt.xlabel(r"$x_0$")
-    plt.ylabel(r"$x_1$")
-    plt.xticks([-1,0,1])
-    plt.yticks([0,3])
-    return ax
-
-
-
-
-def update_geometry(u_, beta_, phi0, beta0, thickness, Thickness_dynamic):
-    # Kinematics
-    F = grad(u_) + grad(phi0)
-    d = director(beta_ + beta0)
-    # Initial metric and curvature
-    a0 = grad(phi0).T*grad(phi0)
-    b0 = -0.5*(grad(phi0).T*grad(d0) + grad(d0).T*grad(phi0))
-    a0_contra = inv(a0)
-    j0 = det(a0)
-    H = project(inner(a0_contra,b0),FunctionSpace(mesh,'DG',0))
-    
-    # The membrane, bending, and shear strain measures of the Naghdi model
-    e = lambda F: 0.5*(F.T*F - a0)
-    k = lambda F, d: -0.5*(F.T*grad(d) + grad(d).T*F) - b0
-    gamma = lambda F, d: F.T*d - grad(phi0).T*d0
-    if Thickness_dynamic:
-        D_Delta= inner(a0_contra,e(F))
-        thickness = project(thickness*(1-dt*D_Delta)- dt*thickness*kd+dt*vp*(1-H*thickness/2),V_thickness)
-        
-    # Contravariant Hooke's tensor
-    i, j, l, m = Index(), Index(), Index(), Index()
-    A_ = as_tensor((0.5*a0_contra[i,j]*a0_contra[l,m]
-                    + 0.25*(a0_contra[i,l]*a0_contra[j,m] + a0_contra[i,m]*a0_contra[j,l]))
-                    ,[i,j,l,m])
-     # Stress
-    # N = thickness*mu*as_tensor(A_[i,j,l,m]*e(F)[l,m], [i,j])
-    N = thickness*mu*as_tensor(A_[i,j,l,m]*e(F)[l,m]+a0_contra[i,j]*(kd-vp/thickness), [i,j])
-    # M = (thickness**3/3.0)*mu*as_tensor(A_[i,j,l,m]*k(F,d)[l,m],[i,j])
-    M = (thickness**3/3.0)*mu*as_tensor(A_[i,j,l,m]*k(F,d)[l,m]+(H*a0_contra[i,j]-b0[i,j])*(kd-vp/thickness),[i,j])
-    T = thickness*mu*as_tensor(a0_contra[i,j]*gamma(F,d)[j], [i])
-    # Energy densities
-    psi_m = 0.5*inner(N, e(F))
-    psi_b = 0.5*inner(M, k(F,d))
-    psi_s = 100*0.5*inner(T, gamma(F,d))
-    # Total Energy densities
-    dx_h = dx(metadata={'quadrature_degree': 2})
-    h = CellDiameter(mesh)
-    alpha = project(t**2/h**2, FunctionSpace(mesh,'DG',0))
-    u_1, u_2, u_3 = split(u_)
-    # External work
-    Force = 100.0001
-    # W_Force = Force*u_3*thickness (If multiply by the thickness we need to rescale the force)
-    W_Force = Force*u_3
-
-    Pi_PSRI = (psi_b*sqrt(j0)*dx + alpha*psi_m*sqrt(j0)*dx + alpha*psi_s*sqrt(j0)*dx +
-               (1.0 - alpha)*psi_s*sqrt(j0)*dx_h + (1.0 - alpha)*psi_m*sqrt(j0)*dx_h)+W_Force*sqrt(j0)*dx
-
-    # The total elastic energy and its first and second derivatives
-    Pi = Pi_PSRI
-    dPi = derivative(Pi, q_, q_t)
-    J = derivative(dPi, q_, q)
-    #
-    return dPi, J, thickness
-
-def save_plots (ii):
-    if (ii%10==0):
-        # 2D displacement from a contour plot
-        print(displacement[ii])
-        plt.figure()
-        # c=plot(phi[2], cmap='RdGy', mode = 'color',vmin=-.2, vmax=0)
-        c=plot(phi[2], cmap='RdGy', mode = 'color',vmin=-.5, vmax=.0)
-        plt.colorbar(c)
-        plt.savefig("output/phi2D/phi2"+str(ii).zfill(4)+".png")
-        plt.close()
-        
-        # Vertical displacement in a line passing in the middle of the plate
-        plt.figure()
-        tol = 0.001 # avoid hitting points outside the domain
-        yy = np.linspace(-1 + tol, 1 - tol, 101)
-        points = [(y_,0) for y_ in yy] # 2D points
-        w_line = np.array([phi(point)[2] for point in points])
-        plt.plot(yy, 1*w_line, linewidth=2) # magnify w
-        plt.ylim(-0.50, 0.01)
-        # plt.close()
-        # plot_shell(phi)
-        plt.savefig("output/phi/phi"+str(ii).zfill(4)+".png")
-        plt.close()
-        
-        #3D geometry evolution
-        plt.figure()
-        plot_shell(phi)
-        plt.savefig("output/phi3D/phi3D"+str(ii).zfill(4)+".png")
-        plt.close()
-        
-        # Evolution of the thickness of the plate
-        plt.figure()
-        #plot(mesh)
-        c=plot(100*thickness, cmap='RdGy', mode = 'color',vmin=4.2, vmax=5)
-        plt.colorbar(c)
-        plt.savefig("output/thick/t"+str(ii).zfill(4)+".png")
-        plt.close()
-
-def update_mesh(phi,u_):
-    vm = inner(normal(phi),u_)*normal(phi)
-    return vm
-    
-# ======================================================
-# Clamped viscous shell plate under uniform force
-# ======================================================
-#
-#
-# This demo program solves the nonlinear Naghdi shell equations for a
-# semi-cylindrical shell loaded by a point force. This problem is a standard
-# reference for testing shell finite element formulations, see [1].
-# The numerical locking issue is cured using enriched finite
-# element including cubic bubble shape functions and Partial Selective
-# Reduced Integration [2].
-#
-
-
 import os, sys
 
 import numpy as np
 import matplotlib.pyplot as plt
 
 from dolfin import *
-from ufl import Index
+from ufl import Index, unit_vector, shape, Jacobian
 from mshr import *
 from mpl_toolkits.mplot3d import Axes3D
+# from adapt_fix import adapt
+import subprocess
 
+import meshio
 
-
-class NonlinearProblemPointSource(NonlinearProblem):
+class CustomNonlinearProblem(NonlinearProblem):
 
     def __init__(self, L, a, bcs):
         NonlinearProblem.__init__(self)
         self.L = L
         self.a = a
         self.bcs = bcs
-        self.P = 0.0
 
     def F(self, b, x):
         assemble(self.L, tensor=b)
-        #point_source = PointSource(self.bcs[0].function_space().sub(0).sub(2), Point(0.0, 0.0), self.P)
-        #point_source.apply(b)
         for bc in self.bcs:
             bc.apply(b, x)
-    
+
     def J(self, A, x):
         assemble(self.a, tensor=A)
         for bc in self.bcs:
             bc.apply(A, x)
+
+class SurfaceNormal(UserExpression):
+    def __init__ (self, mesh, mmesh, **kwargs):
+        super(SurfaceNormal, self).__init__(**kwargs)
+        self.mesh = mesh
+        self.mmesh = mmesh
+        
+        
+    def eval_cell(self, value, x, ufc_cell):
+        nodes = self.mmesh.cells_dict["triangle"][ufc_cell.index, :]
+        x = self.mesh.coordinates()[nodes, :]
+        value[:] = np.cross(x[0, :] - x[1, :], x[0, :] - x[2, :])
+        value /= np.linalg.norm(value)
+        # For the spherical mesh the normal was not well oriented
+        self.mesh.init_cell_orientations(Expression(('x[0]', '-x[1]', 'x[2]'), degree = 0))
+        value[self.mesh.cell_orientations() == 1] *= -1
+
+    def value_shape(self):
+        return (3,)
+                
+
+class NonlinearProblem_metric_from_mesh:
+    def __init__(self, mesh,mmesh, thick, mu, zeta, kd, vp, vol_ini, fname = None):
+        self.mesh = mesh
+        self.mmesh = mmesh
+        self.thick = thick
+        self.mu = mu
+        self.zeta = zeta
+        self.kd = kd
+        self.vp = vp
+        self.vol_ini = vol_ini
+        self.set_solver()
+        self.set_functions_space()
+        self.thickness = project(thick, self.V_thickness)
+        self.initialize()
+        
+        self.fname = fname
+        if fname is not None:
+            self.output_file = XDMFFile(fname)
+            self.output_file.parameters["functions_share_mesh"] = True
+            self.output_file.parameters["flush_output"] = True
             
-parameters["form_compiler"]["quadrature_degree"] = 4
+    def write(self, i, u = True, beta = True, phi = True, frame = False, epaisseur = False, activity = False, energies = True):
+        if u:
+            u = self.q_.sub(0, True)
+            u.rename("u", "u")
+            self.output_file.write(u, i)
+        if beta:
+            beta = self.q_.sub(1, True)
+            beta.rename("beta", "beta")
+            self.output_file.write(beta, i)
+        if phi:
+            self.phi0.rename("phi0", "phi0")
+            self.output_file.write(self.phi0, i)
+        if frame:
+            self.a1.rename("a1", "a1")
+            self.output_file.write(self.a1, i)
+            self.a2.rename("a2", "a2")
+            self.output_file.write(self.a2, i)
+            self.n0.rename("n0", "n0")
+            self.output_file.write(self.n0, i)
+            director = project(self.d, self.VT)
+            director.rename("director", "director")
+            self.output_file.write(director, i)
+        if epaisseur:
+            self.thickness.rename("thickness", "thickness")
+            self.output_file.write(self.thickness, i)
+            
+        if activity:
+            self.Q_field.rename("activity", "activity")
+            self.output_file.write(self.Q_field, i)
+            
+        if energies:
+            self.psi_m
+            self.psi_b
+            self.psi_s
+            
+    def set_functions_space(self):
+        P2 = FiniteElement("Lagrange", self.mesh.ufl_cell(), degree = 2)
+        bubble = FiniteElement("B", self.mesh.ufl_cell(), degree = 3)
+        enriched = P2 + bubble
+        R = FiniteElement("Real", self.mesh.ufl_cell(), degree=0)
+        element = MixedElement([VectorElement(enriched, dim=3), VectorElement(P2, dim=2), R])
+        
+        element = MixedElement([VectorElement(enriched, dim=3), VectorElement(P2, dim=2), R, VectorElement(R, dim=3)])
+        
+        self.Q = FunctionSpace(self.mesh, element)
+        self.q_, self.q, self.q_t = Function(self.Q), TrialFunction(self.Q), TestFunction(self.Q)
+        self.u_, self.beta_, self.lbda_ , self.rigid_ = split(self.q_)
+        self.u, self.beta, self.lbda, self.rigid = split(self.q)
+        self.u_t, self.beta_t, self.lbda_t, self.rigid_t = split(self.q_t)
+        
+        self.V_phi =  FunctionSpace(self.mesh, VectorElement("P", mesh.ufl_cell(), degree = 2, dim = 3))
+        self.V_beta = FunctionSpace(self.mesh, VectorElement("P", mesh.ufl_cell(), degree = 2, dim = 2))
+        self.V_thickness = FunctionSpace(self.mesh, P2)
+        self.V_alpha = FunctionSpace(self.mesh, "DG", 0)
+        self.VT = VectorFunctionSpace(self.mesh, "DG", 0, dim = 3)
+        
+    def set_solver(self):
+#        self.solver = PETScSNESSolver()
+#        self.solver.parameters["method"] = "newtonls"
+#        self.solver.parameters['maximum_iterations'] = 50
+#        self.solver.parameters['linear_solver'] = "mumps"
+#        self.solver.parameters['absolute_tolerance'] = 1E-6
+#        self.solver.parameters['relative_tolerance'] = 1E-6
 
-output_dir = "output/"
-if not os.path.exists(output_dir):
-    os.makedirs(output_dir)
+        self.solver = NewtonSolver()
+        self.solver.parameters['maximum_iterations'] = 50
+#        solver.parameters['linear_solver'] = "mumps"
+        self.solver.parameters['absolute_tolerance'] = 1E-6
+        self.solver.parameters['relative_tolerance'] = 1E-6
+
+
+#         prm = self.solver.parameters
+#         prm['maximum_iterations'] = 50
+#         prm['report'] = True
+#         prm['relative_tolerance'] = 1e-4
+#         prm['absolute_tolerance'] = 1e-4
+#         prm['linear_solver'] = 'mumps'
+        
+    def set_shape(self):
+        x = SpatialCoordinate(self.mesh)
+        initial_shape = x
+        self.phi0 = project(initial_shape, self.V_phi)
+            
+    def set_local_frame(self):
+        normal = SurfaceNormal(mesh = self.mesh, mmesh = self.mmesh)
+        a1, a2 = self.local_frame(normal)
+        self.a1 = project(a1, self.VT)
+        self.a2 = project(a2, self.VT)
+        self.n0 = project(normal, self.VT)
+        
+    def local_frame(mesh, normal):
+        ey = as_vector([0, 1, 0])
+        ez =  as_vector([0, 0, 1])
+        a1 = cross(ey, normal)
+        norm_a1 = sqrt(dot(a1, a1))
+        a1 = conditional(lt(norm_a1,0.01), ez, a1/norm_a1)
+        a2 = cross(normal, a1)
+        a2 /= sqrt(dot(a2, a2))
+        return a1, a2
     
-output_dir_phi = "output/phi"
-if not os.path.exists(output_dir_phi):
-    os.makedirs(output_dir_phi)
+    def director(self, beta):
+         return as_vector([sin(beta[1])*cos(beta[0]), -sin(beta[0]), cos(beta[1])*cos(beta[0])])
 
-output_dir_phi2 = "output/phi2D"
-if not os.path.exists(output_dir_phi2):
-    os.makedirs(output_dir_phi2)
+#    def director(self, beta):
+#        return as_vector([sin(beta[1])*cos(beta[0]), sin(beta[0])*sin(beta[1]), cos(beta[1])]) # Spherical coord
 
-output_dir_phi3 = "output/phi3D"
-if not os.path.exists(output_dir_phi3):
-    os.makedirs(output_dir_phi3)
+
+    def set_director(self):
+        beta0_expression = Expression(["atan2(-n[1], sqrt(pow(n[0],2) + pow(n[2],2)))",
+                                        "atan2(n[0], n[2])"], n = self.n0, degree=4)
+#        beta0_expression = Expression(["atan2(n[1], n[0])",
+#                               "atan2(sqrt(pow(n[0],2) + pow(n[1],2)), n[2])"], n = self.n0, degree=4) # spherical coord for the semicylinder
+
+
+        self.beta0 = project(beta0_expression, self.V_beta)
+
+        # The director in the initial configuration is then written as ::
+
+        self.d0 = self.director(self.beta0)
+
     
-output_dir_t = "output/thick"
-if not os.path.exists(output_dir_t):
-    os.makedirs(output_dir_t)
+    def d1(self, u):
+        return u.dx(0)*self.a1[0]+u.dx(1)*self.a1[1]+u.dx(2)*self.a1[2]
+    def d2(self, u):
+        return u.dx(0)*self.a2[0]+u.dx(1)*self.a2[1]+u.dx(2)*self.a2[2]
+    def grad_(self, u):
+        return as_tensor([self.d1(u), self.d2(u)])
     
-# We consider a semi-cylindrical shell of radius :math:`\rho` and axis length
-# :math:`L`. The shell is made of a linear elastic isotropic homogeneous
-# material with Young modulus :math:`E` and Poisson ratio :math:`\nu`. The
-# (uniform) shell thickness is denoted by :math:`t`.
-# The Lamé moduli :math:`\lambda`, :math:`\mu` are introduced to write later
-# the 2D constitutive equation in plane-stress::
+    def set_fundamental_forms(self):
+        self.a0_init = as_tensor([[dot(self.a1, self.a1), dot(self.a1, self.a2)],\
+                                  [dot(self.a2, self.a1), dot(self.a2, self.a2)]])
+        
+        self.b0_init = - sym(as_tensor([[inner(as_vector(self.grad_(self.d0)[0,:]), self.a1), inner(as_vector(self.grad_(self.d0)[0,:]), self.a2)],\
+                                        [inner(as_vector(self.grad_(self.d0)[1,:]), self.a1), inner(as_vector(self.grad_(self.d0)[1,:]), self.a2)]]))
+        
 
-L = 1.
-# E, nu = 2.0685E7, 0.3
-mu = 1.0E7
-# E/(2.0*(1.0 + nu))
-t = Constant(0.03)
-kd = 20.0e-3
-vp = 1.0e-3
-
-# The midplane of the initial (stress-free) configuration
-# :math:`{\mit \Phi_0}` of the shell is given in the form of an analytical
-# expression
-#
-# .. math:: \phi_0:x\in\omega\subset R^2 \to \phi_0(x) \in {\mit \Phi_0} \subset \mathcal R^3
-#
-# in terms of the curvilinear coordinates :math:`x`. In the specific case
-# we adopt the cylindrical coordinates :math:`x_0` and :math:`x_1`
-# representing the angular and axial coordinates, respectively.
-# Hence we mesh the two-dimensional domain
-# :math:`\omega \equiv [0,L_y] \times [-\pi/2,\pi/2]`. ::
-
-P1, P2 = Point(-L, -L), Point(L, L)
-ndiv = 11
-mesh = generate_mesh(Rectangle(P1, P2), ndiv)
-plot(mesh); plt.xlabel(r"$x_0$"); plt.ylabel(r"$x_1$")
-plt.savefig("output/mesh.png")
+    def set_kinematics_and_fundamental_forms(self):
+        # Kinematics
+#         grad_ = lambda u : as_tensor([self.d1(u), self.d2(u)])
+#         print("Shape of grad_u: ", (self.grad_(self.u_).ufl_shape))
 
 
-#    Discretisation of the parametric domain.
-#
-# We provide the analytical expression of the initial shape as an
-# ``Expression`` that we represent on a suitable ``FunctionSpace`` (here
-# :math:`P_2`, but other are choices are possible)::
+        self.F = self.grad_(self.u_) + self.grad_(self.phi0)
+#         print("Shape of F ", (self.F.ufl_shape))
 
-# initial_shape = Expression(('r*sin(x[0])','x[1]','r*cos(x[0])'), r=rho, degree = 4)
-initial_shape = Expression(('x[0]','x[1]','r'), r=0, degree = 4)
-V_phi =  FunctionSpace(mesh, VectorElement("P", triangle, degree = 2, dim = 3))
-phi0 = project(initial_shape, V_phi)
-
-
-
-
-## Discretisation of the thickness. I need to find the right way to discretize to see if I can avoid the FCC stuff
-PP2 = FiniteElement("Lagrange", triangle, degree = 2)
-TT = FiniteElement("CG", mesh.ufl_cell(), 2)
-
-V_thickness =  FunctionSpace(mesh, PP2)
-thick = Expression('0.05', degree = 4)
-thickness = project( thick, V_thickness)
-
-Thickness_dynamic = True  # True if we consider the variation of T over time
-
-
-
-
-# Given the midplane, we define the corresponding unit normal as below and
-# project on a suitable function space (here :math:`P_1` but other choices
-# are possible)::
-
-def normal(y):
-    n = cross(y.dx(0), y.dx(1))
-    return n/sqrt(inner(n,n))
-
-V_normal = FunctionSpace(mesh, VectorElement("P", triangle, degree = 1, dim = 3))
-n0 = project(normal(phi0), V_normal)
-
-# The kinematics of the Nadghi shell model is defined by the following
-# vector fields :
-#
-# - :math:`\phi`: the position of the midplane, or the displacement from the reference configuration :
-# .     math:`u = \phi - \phi_0`:
-# - :math:`d`: the director, a unit vector giving the orientation of the microstructure
-#
-# We parametrize the director field by two angles, which correspond to spherical coordinates,
-# so as to explicitly resolve the unit norm constraint (see [3])::
-
-def director(beta):
-    return as_vector([sin(beta[1])*cos(beta[0]), -sin(beta[0]), cos(beta[1])*cos(beta[0])])
-
-# We assume that in the initial configuration the director coincides with
-# the normal. Hence, we can define the angles :math:`\beta`: for the initial
-# configuration as follows: ::
-
-beta0_expression = Expression(["atan2(-n[1], sqrt(pow(n[0],2) + pow(n[2],2)))",
-                               "atan2(n[0],n[2])"], n = n0, degree=4)
-
-V_beta = FunctionSpace(mesh, VectorElement("P", triangle, degree = 2, dim = 2))
-beta0 = project(beta0_expression, V_beta)
-
-# The director in the initial configuration is then written as ::
-
-d0 = director(beta0)
-
-# plot_shell(phi0, project(d0, V_normal))
-# plt.savefig("output/initial_configuration.png")
-
-
-# In our 5-parameter Naghdi shell model the configuration of the shell is
-# assigned by
-#
-# - the 3-component vector field :math:`u`: representing the displacement
-#   with respect to the initial configuration :math:`\phi_0`:
-#
-# - the 2-component vector field :math:`\beta`: representing the angle variation
-#   of the director :math:`d`: with respect to the initial configuration
-#
-# Following [1], we use a :math:`[P_2 + B_3]` element for :math:`u` and a :math:`[CG_2]^2`
-# element for :math:`beta`, and collect them in the state vector
-# :math:`q = (u, \beta)`::
-
-P2 = FiniteElement("Lagrange", triangle, degree = 2)
-bubble = FiniteElement("B", triangle, degree = 3)
-enriched = P2 + bubble
-
-element = MixedElement([VectorElement(enriched, dim=3), VectorElement(P2, dim=2)])
-
-Q = FunctionSpace(mesh, element)
-
-# Then, we define :py:class:`Function`, :py:class:`TrialFunction` and :py:class:`TestFunction` objects
-# to express the variational forms and we split them into each individual component function::
+        
+        self.d = self.director(self.beta_ + self.beta0)
     
-q_, q, q_t = Function(Q), TrialFunction(Q), TestFunction(Q)
-u_, beta_ = split(q_)
+        self.a0 = as_tensor([[dot(self.a1, self.a1), dot(self.a1, self.a2)],\
+                            [dot(self.a2, self.a1), dot(self.a2, self.a2)]])
+        
+#         print("Shape of metric tensor: ", (self.a0.ufl_shape))
 
+        
+        self.b0 = - sym(as_tensor([[inner(as_vector(self.grad_(self.d0)[0,:]), self.a1), inner(as_vector(self.grad_(self.d0)[0,:]), self.a2)],\
+                                  [inner(as_vector(self.grad_(self.d0)[1,:]), self.a1), inner(as_vector(self.grad_(self.d0)[1,:]), self.a2)]]))
 
-# Shear and membrane locking is treated using the partial reduced
-# selective integration proposed in Arnold and Brezzi [2]. In this approach
-# shear and membrane energy are splitted as a sum of two contributions
-# weighted by a factor :math:`\alpha`. One of the two contributions is
-# integrated with a reduced integration. While [1] suggests a 1-point
-# reduced integration, we observed that this leads to spurious modes in
-# the present case. We use then :math:`2\times 2`-points Gauss integration
-# for a portion :math:`1-\alpha` of the energy, whilst the rest is
-# integrated with a :math:`4\times 4` scheme. We further refine the
-# approach of [1] by adopting an optimized weighting factor
-# :math:`\alpha=(t/h)^2`, where :math:`h` is the mesh size. ::
+#         print("Shape of curvature tensor: ", (self.b0.ufl_shape))
 
-dx_h = dx(metadata={'quadrature_degree': 2})
-h = CellDiameter(mesh)
-alpha = project(t**2/h**2, FunctionSpace(mesh,'DG',0))
+        self.j0 = det(self.a0)
 
-
-# Here we initialize the Energy, to define the problem
-# The computation of kinetics, metrics, Forces are all hidden here
-# Would need to expand this function if we want to access forces, for instance
-
-dPi, J, thickness = update_geometry(u_, beta_, phi0, beta0, thickness, False)
-# We do not want to update the thickness in the initialization
-
-
-# The boundary conditions prescribe a full clamping on the boundaries,
-
-whole_boundary = lambda x, on_boundary: on_boundary
-leftright_boundary = lambda x, on_boundary: near(abs(x[0]), L, 1.e-6)  and on_boundary # left-right clamp
-
-bc_clamped = DirichletBC(Q, project(q_, Q), whole_boundary)
-bcs = [bc_clamped]
-
-
-# defining a custom :py:class:`NonlinearProblem`::
-problem = NonlinearProblemPointSource(dPi, J, bcs)
-
-# We use a standard Newton solver and setup the files for the writing the
-# results to disk::
-
-solver = NewtonSolver()
-#solver.parameters['error_on_nonconvergence'] = False
-solver.parameters['maximum_iterations'] = 50
-#solver.parameters['linear_solver'] = "mumps"
-solver.parameters['absolute_tolerance'] = 1E-6
-solver.parameters['relative_tolerance'] = 1E-6
-output_dir = "output/"
-#file_phi = File(output_dir + "configuration.pvd")
-#file_energy = File(output_dir + "energy.pvd")
-
-# Finally, we can solve the quasi-static problem, incrementally increasing
-
-q_.assign(project(Constant((0,0,0,0,0)), Q))
-
-
-# Begin of the time loop
-ii=0
-time = 0.0
-dt = 1.E-0  # time step
-loop_size = 400
-Time = loop_size*dt
-displacement=np.zeros(loop_size)
-min_thickness = np.zeros(loop_size)
-displacement_0=phi0(0.0,L/2)[2]
-while (time < Time):
-    (niter,cond) = solver.solve(problem, q_.vector())
+        self.a0_contra = inv(self.a0)
+        self.H = 0.5*inner(self.a0_contra, self.b0)
+                
+    def membrane_deformation(self):
+        return 0.5*(self.F*self.F.T - self.a0)
     
-    # Update geometry
-    phi = project(u_*dt + phi0 , V_phi)
-    displacement[ii] = phi(0.0, 0)[2] - displacement_0
-    phi0 = project(phi,V_phi)
-    # phi.rename("phi", "phi")
-    # file_phi << (phi, time)
+    def bending_deformation(self):
+        return -0.5*(self.F*self.grad_(self.d).T + self.grad_(self.d)*self.F.T) - self.b0
     
-    # Redefinition of the problem
-    dPi, J, thickness = update_geometry(u_, beta_, phi0, beta0, thickness, Thickness_dynamic)
-    problem = NonlinearProblemPointSource(dPi, J, bcs)
-    save_plots (ii)
-    
-    ii+=1;
-    time += dt
+    def shear_deformation(self):
+        return self.F*self.d - self.grad_(self.phi0)*self.d0
+        
+    def set_thickness(self, dt):
+        D_Delta= inner(self.a0_contra, self.membrane_deformation())
+#         self.thickness = project(-dt*(dot(self.u_,self.phi0.dx(0))*self.thickness.dx(0)+dot(self.u_,self.phi0.dx(1))*\
+#                                       self.thickness.dx(1)) + self.thickness*(1-dt*D_Delta) - dt*self.thickness*self.kd + \
+#                                  dt*self.vp*(1-self.H*self.thickness/2),self.V_thickness)
+        self.thickness = project((self.thickness/dt + self.vp)/(1/dt + D_Delta + self.kd + self.vp*self.H/2),self.V_thickness)
 
-# We can plot the final configuration of the shell
-#plot_shell(phi)
-#plt.figure()
-#c=plot(phi[2], cmap='RdGy', mode = 'color',vmin=-.5, vmax=0)
-#plt.colorbar(c)
+    
+    def set_energies(self):
+        # Gaussian signal in the middle of the plate and uniform across one of the directions
+        sig_q = 1./2 ;
+        Q_Expression = Expression(('exp(-0.5*(x[0]*x[0])/(sig_q*sig_q))/(sig_q*sqrt(2.*pi))'), sig_q = sig_q, degree = 2)
+        #Q_Expression = Expression(('1.'), sig_q= sig_q,degree = 2)
+        self.Q_field = project(Q_Expression, self.V_thickness)
+        self.q_11, self.q_12, self.q_22, self.q_33 = 1.0/6, 0., 1./6, -1./3
+        self.Q_tensor = as_tensor([[1./6, 0.0], [0.0, 1./6]])
+        
+        i, j, l, m = Index(), Index(), Index(), Index()
+        A_ = as_tensor((0.5*self.a0_contra[i,j]*self.a0_contra[l,m]
+                       + 0.25*(self.a0_contra[i,l]*self.a0_contra[j,m] + self.a0_contra[i,m]*self.a0_contra[j,l]))
+                       ,[i,j,l,m])
+        C_active = as_tensor(self.Q_tensor[l,m]*(self.H*(self.a0_contra[i,l]*self.a0_contra[j,m]+self.a0_contra[j,l]*self.a0_contra[i,m]) + self.a0_contra[i,j] * self.b0[m,l]-\
+                0.75*(self.a0_contra[i,m] * self.b0[j,l] + self.a0_contra[i,l] * self.b0[j,m] + self.a0_contra[j,m]*self.b0[i,l] + self.a0_contra[j,l]*self.b0[i,m]))
+                           +(self.b0[i,j]-4*self.H*self.a0_contra[i,j])*self.q_33
+                            ,[i,j])
+
+
+        self.N = self.thickness*self.mu *as_tensor(A_[i,j,l,m]*self.membrane_deformation()[l,m] + self.a0_contra[i,j]*(self.kd - self.vp/self.thickness), [i,j])+ \
+            self.Q_field*self.zeta*self.thickness*as_tensor((self.a0_contra[i,l]*self.a0_contra[j,m]*self.Q_tensor[l,m] - self.a0_contra[i,j]*self.q_33),[i,j])
        
+        self.M = (self.thickness**3/3.0)*self.mu*as_tensor(A_[i,j,l,m]*self.bending_deformation()[l,m] + (self.H*self.a0_contra[i,j] - self.b0[i,j])*(self.kd-self.vp/self.thickness),[i,j])\
+            - (self.thickness**3/12.)*self.zeta*C_active*self.Q_field
+       
+        self.T = self.thickness*self.mu*as_tensor(self.a0_contra[i,j]*self.shear_deformation()[j], [i])
+    
+    
+        self.psi_m = 0.5*inner(self.N, self.membrane_deformation())
+        self.psi_b = 0.5*inner(self.M, self.bending_deformation())
+        self.psi_s = 1*0.5*inner(self.T, self.shear_deformation())
+        
+    def total_energy(self):
+        # Total Energy densities
+        self.dx = Measure('dx', domain = self.mesh)
+        self.dx_h = self.dx(metadata={'quadrature_degree': 2})
+        self.h = CellDiameter(self.mesh)
+#         alpha = self.thickness**2/self.h**2
+        alpha = project(self.thickness**2/self.h**2, self.V_alpha)
 
-# References
-# ----------
-#
-# [1] K. Sze, X. Liu, and S. Lo. Popular benchmark problems for geometric
-# nonlinear analysis of shells. Finite Elements in Analysis and Design,
-# 40(11):1551 – 1569, 2004.
-#
-# [2] D. Arnold and F.Brezzi, Mathematics of Computation, 66(217): 1-14, 1997.
-# https://www.ima.umn.edu/~arnold//papers/shellelt.pdf
-#
-# [3] P. Betsch, A. Menzel, and E. Stein. On the parametrization of finite
-# rotations in computational mechanics: A classification of concepts with
-# application to smooth shells. Computer Methods in Applied Mechanics and
-# Engineering, 155(3):273 – 305, 1998.
-#
-# [4] P. G. Ciarlet. An introduction to differential geometry with
-# applications to elasticity. Journal of Elasticity, 78-79(1-3):1–215, 2005.
+        u_1, u_2, u_3 = split(self.u_)
+        volume = assemble(1.*self.dx(domain=self.mesh))/3
+
+       
+        Pi_PSRI = (1.0 - alpha)*self.psi_s*sqrt(self.j0)*self.dx_h + (1.0 - alpha)*self.psi_m*sqrt(self.j0)*self.dx_h + \
+                    self.psi_b*sqrt(self.j0)*self.dx + alpha*self.psi_m*sqrt(self.j0)*self.dx + alpha*self.psi_s*sqrt(self.j0)*self.dx
+                     
+                    
+
+        # The total elastic energy and its first and second derivatives
+        self.Pi = Pi_PSRI
+        self.Pi = self.Pi + dot(self.rigid_,self.u_)*sqrt(self.j0)*self.dx # Remotion of rigid motion
+        self.Pi = self.Pi + self.lbda_*dot(self.u_, self.n0)*sqrt(self.j0)*self.dx # Volume conservation
+        self.dPi = derivative(self.Pi, self.q_, self.q_t)# + self.lbda_*dot(self.u_t, self.n0)*sqrt(self.j0)*self.dx+ self.lbda_t*dot(self.u_, self.n0)*sqrt(self.j0)*self.dx
+        self.J = derivative(self.dPi, self.q_, self.q)
+        
+        
+    
+    def initialize(self):
+        self.set_shape()
+        self.set_local_frame()
+        self.set_director()
+        self.set_fundamental_forms()
+        self.set_kinematics_and_fundamental_forms()
+        self.set_energies()
+        self.total_energy()
+    def evolution(self, dt):
+        self.set_thickness(dt)
+        self.phi0 = project(self.u_*dt + self.phi0 , self.V_phi) # Lagrangian
+#        print("Shape of metric tensor: ", (self.u_).ufl_shape)
+
+#        self.phi0 = project((dot(self.u_ - dot(self.u_,self.n0)*self.n0, (self.d1(self.phi0) +self.d2(self.phi0))))*dt + self.phi0 , self.V_phi)
+        
+        displacement_mesh = project(self.u_*dt, self.V_phi)
+#        displacement_mesh = project((dot(self.u_, self.n0)*self.n0)*dt , self.V_phi)
+
+        ALE.move(self.mesh, displacement_mesh)
+
+        self.set_local_frame()
+#        self.set_director()
+        self.set_kinematics_and_fundamental_forms()
+        self.set_energies()
+        self.total_energy()
+
+            
+    def solve(self, bcs):
+        problem = CustomNonlinearProblem(self.dPi, self.J, bcs)
+        return self.solver.solve(problem, self.q_.vector())
+    
+    
+    def mesh_refinement(self ):
+        with XDMFFile("mesh.xdmf") as ffile:
+             ffile.parameters["functions_share_mesh"] = True
+             ffile.write(self.mesh)
+         
+
+        # Convert to Medit format
+        os.system('meshio-convert --input-format xdmf --output-format medit mesh.xdmf mesh.mesh')
+
+        # call mmgs with mesh optimization and Hausdorff distance
+        os.system('bin/mmgs_O3 -in mesh.mesh -out mesh_optimized.mesh -hausd 0.01')
+
+        # Convert back to .msh format using Gmsh
+        os.system(' /Applications/Gmsh.app/Contents/MacOS/gmsh mesh_optimized.mesh -3 -o mesh_optimized.msh')
+
+        fname = "mesh.xdmf"
+        dist = 0.001 # controls the optimized mesh resolution (see https://www.mmgtools.org/mmg-remesher-try-mmg/mmg-remesher-options/mmg-remesher-option-hausd)
+        fname_out = "mesh_optimized.xdmf"
+
+        # read back with meshio to remove cells and cell data and convert to xdmf
+        mmesh = meshio.read(fname_out.replace(".xdmf", ".msh"))
+        #mmesh.remove_lower_dimensional_cells()
+        #meshio.write(fname_out, meshio.Mesh(mmesh.points, mmesh.cells))
+        meshio.write(fname_out,
+                        meshio.Mesh(points = mmesh.points,
+                               cells = {'triangle': mmesh.cells_dict['triangle']}))
+        self.mmesh = meshio.read(fname_out)
+
+        # read in with FEniCS
+        new_mesh = Mesh()
+        with XDMFFile(fname_out) as ffile:
+            ffile.read(new_mesh)
+        self.mesh = new_mesh
+        self.adapt_and_interpolate()
+
+    def adapt_and_interpolate(self):
+
+        # adapt
+#        self.Q = FunctionSpace(adapt(self.Q._cpp_object, self.mesh))
+        self.q_ = Function(adapt(self.q_._cpp_object, self.mesh))
+        self.Q = self.q_.function_space()
+        self.V_phi = FunctionSpace(adapt(self.V_phi._cpp_object, self.mesh))
+        self.V_beta = FunctionSpace(adapt(self.V_beta._cpp_object, self.mesh))
+        self.V_thickness = FunctionSpace(adapt(self.V_thickness._cpp_object, self.mesh))
+        self.V_alpha = FunctionSpace(adapt(self.V_alpha._cpp_object, self.mesh))
+        self.VT = FunctionSpace(adapt(self.VT._cpp_object, self.mesh))
+        
+        # interpolate
+        
+        self.phi0 = interpolate(self.phi0, self.V_phi)
+        self.q_ = interpolate(self.q_, self.Q)
+        self.u_ = interpolate(self.q_.sub(0),self.Q.sub(0).collapse())
+        self.beta_ = interpolate(self.q_.sub(1),self.Q.sub(1).collapse())
+        self.thickness = interpolate(self.thickness, self.V_thickness)
+        self.Q_field = interpolate(self.Q_field, self.V_thickness)
+
+#        self.q = interpolate(self.q, self.Q._cpp_object)
+#        self.q_t = interpolate(self.q_t, self.Q._cpp_object)
+#        self.q = TestFunction(adapt(self.q._cpp_object, self.mesh))
+#        self.q_t = TrialFunction(adapt(self.q_t, self.mesh))
+
+        self.q_t, self.q = TrialFunction(self.Q), TestFunction(self.Q)
+        self.u_, self.beta_ = split(self.q_)
+    
+        self.set_local_frame()
+        self.set_director()
+        self.set_fundamental_forms()
+        self.set_kinematics_and_fundamental_forms()
+        self.set_energies()
+        self.total_energy()
+        self.set_solver()
+
+        
+        
+        
+L = 1.
+mu = 1.0E6
+# t = Constant(0.03)
+thick = Expression('0.03', degree = 4)
+
+kd = 1.0*100.0e-3
+vp = 1.0*3.0e-3
+q_11, q_12, q_22 = 1.0/6, 0., 1./6
+Q_tensor = as_tensor([[1./6, 0.0], [0.0, 1./6]])
+q_33 = -1./3
+zeta = 1.0e5
+
+parameters["form_compiler"]["quadrature_degree"] = 4
+parameters['allow_extrapolation'] = True # TODO: Bug Workaround?!?
+
+
+xdmf_name = "Hemisphere.xdmf"
+
+fname_msh = xdmf_name.replace("xdmf", "msh")
+subprocess.call(["/Applications/Gmsh.app/Contents/MacOS/gmsh", "-2", "-format", "msh2", "Hemisphere.geo",
+                 "-o", fname_msh])
+
+msh = meshio.read(xdmf_name.replace(".xdmf", ".msh"))
+
+meshio.write(xdmf_name, meshio.Mesh(points = msh.points,
+                                      cells = {'triangle': msh.cells_dict['triangle']}))
+
+mmesh = meshio.read(xdmf_name)
+mesh = Mesh()
+#global_normal = Expression(("x[0]", "x[1]", "x[2]"), degree=0)
+#mesh.init_cell_orientations(global_normal)
+
+with XDMFFile(xdmf_name) as mesh_file:
+    mesh_file.read(mesh)
+
+print(len(mesh.coordinates()))
+    
+
+# initial_volume = assemble(Constant('1')*dx(domain=mesh))
+initial_volume = assemble(1.*dx(domain=mesh))/3
+
+print("Initial volume:", initial_volume)
+
+
+
+filename = xdmf_name.replace(".xdmf", "_results.xdmf")
+
+problem = NonlinearProblem_metric_from_mesh(mesh, mmesh, thick = thick, mu = mu, zeta = zeta, kd = kd, vp = vp, vol_ini = initial_volume, fname = filename)
+
+boundary = lambda x, on_boundary: on_boundary
+bc_sphere_disp = DirichletBC(problem.Q.sub(0).sub(2), project(Constant(0.), problem.Q.sub(0).sub(2).collapse()), boundary)
+bcs = [bc_sphere_disp]
+
+
+time = 0
+Time = 5
+dt = 1.E-0
+i = 1
+while (time < Time):
+    (niter,cond) = problem.solve(bcs)
+#     print("Converged in {} newton steps".format(niter))
+    problem.evolution(dt)
+    problem.write(time, u = False, beta = False, phi = False, frame = True, epaisseur = True, activity = True, energies = False)
+    time +=dt
+    i+=1
+    current_volume = assemble(1.*problem.dx(domain=problem.mesh))/3
+
+    print("Current volume:", current_volume)
+
+problem.mesh_refinement()
+print("From here it should be a new problem...")
+
+bc_sphere_disp = DirichletBC(problem.Q.sub(0).sub(2), project(Constant(0.), problem.Q.sub(0).sub(2).collapse()), boundary)
+bcs = [bc_sphere_disp]
+problem.write(time, u = False, beta = False, phi = False, frame = True, epaisseur = True, activity = True, energies = False)
+(niter,cond) = problem.solve(bcs)
+
+print("The end")
