@@ -49,9 +49,48 @@ class SurfaceNormal(UserExpression):
     def value_shape(self):
         return (3,)
 
+boundary_x = lambda x, on_boundary: near(x[0], 0., 1.e-3) and on_boundary
+boundary_y = lambda x, on_boundary: near(x[1], 0., 1.e-3) and on_boundary
+boundary_z = lambda x, on_boundary: near(x[2], 0., 1.e-3) and on_boundary
+
+def save_data(filename, problem):
+    # Volume
+    
+    current_volume = 2*assemble(dot(problem.phi0, problem.n0)*problem.dx(domain=problem.mesh))/pi
+
+    # Furrow radius
+    boundary_subdomains = MeshFunction("size_t", problem.mesh, problem.mesh.topology().dim() - 1)
+    boundary_subdomains.set_all(0)
+    AutoSubDomain(boundary_y).mark(boundary_subdomains, 1)
+    dss = ds(subdomain_data=boundary_subdomains)
+    current_radius = assemble((2./pi) * dss(1)(domain = problem.mesh))
+    #            furrow_radius = np.append(furrow_radius, current_radius )
+    print("radius of the furrow:", current_radius)
+
+    # Dissipation
+    dissipation_membrane  = assemble(problem.psi_m*problem.dx(domain=problem.mesh))
+    passive_dissipation_membrane  = assemble(problem.passive_membrane_energy*problem.dx(domain=problem.mesh))
+    dissipation_bending   = assemble(problem.psi_b*problem.dx(domain=problem.mesh))
+    passive_dissipation_bending   =  assemble(problem.passive_bending_energy*problem.dx(domain=problem.mesh))
+    dissipation_shear     = assemble(problem.psi_s*problem.dx(domain=problem.mesh))
+    polymerization_membrane = assemble(problem.polymerization_membrane*problem.dx(domain = problem.mesh))
+    polymerization_bending =  assemble(problem.polymerization_bending*problem.dx(domain = problem.mesh))
+
+    furrow_dissipation_m = assemble(problem.psi_m*furrow_indicator*problem.dx(domain=problem.mesh))
+    furrow_dissipation_b = assemble(problem.psi_b*furrow_indicator*problem.dx(domain=problem.mesh))
+
+    furrow_passive_dissipation_m =  assemble(problem.passive_membrane_energy*furrow_indicator*problem.dx(domain=problem.mesh))
+    furrow_passive_dissipation_b =  assemble(problem.passive_bending_energy*furrow_indicator*problem.dx(domain=problem.mesh))
+
+    furrow_polymerization_m =  assemble(furrow_indicator*problem.polymerization_membrane*problem.dx(domain = problem.mesh))
+    furrow_polymerization_b =  assemble(furrow_indicator*problem.polymerization_bending*problem.dx(domain = problem.mesh))
 
 
-#projected_normal = ind_z*(ind_y*(ind_x*problem.n0))
+    data = np.column_stack((time, current_volume , current_radius, dissipation_membrane, dissipation_bending, dissipation_shear,
+    passive_dissipation_membrane, passive_dissipation_bending, polymerization_membrane, polymerization_bending, furrow_dissipation_m, furrow_dissipation_b, furrow_passive_dissipation_m, furrow_passive_dissipation_b, furrow_polymerization_m, furrow_polymerization_b ))
+
+    np.savetxt(filename, data,  delimiter=';')
+
 
 def local_frame(mesh, normal=None):
     t = Jacobian(mesh)
@@ -194,22 +233,47 @@ class NonlinearProblem_metric_from_mesh:
         self.mesh.init_cell_orientations(x)
         self.n0.interpolate(x)
         
+    def set_boundary_conditions(self):
+        # Re-definition of the boundary for the new mesh
+        boundary = lambda x, on_boundary: on_boundary
+        boundary_x = lambda x, on_boundary: near(x[0], 0., 1.e-3) and on_boundary
+        boundary_y = lambda x, on_boundary: near(x[1], 0., 1.e-3) and on_boundary
+        boundary_z = lambda x, on_boundary: near(x[2], 0., 1.e-3) and on_boundary
+        
+        if self.geometry == "Hemisphere":
+            bc_sphere_disp = DirichletBC(self.Q.sub(0).sub(2), Constant(0.), boundary)
+            bc_sphere_rot = DirichletBC(self.Q.sub(1).sub(1), Constant(0.), boundary)
+            
+            self.bcs = [bc_sphere_disp, bc_sphere_rot]
+
+        elif self.geometry == "eighthsphere":
+            bc_sphere_disp_x = DirichletBC(self.Q.sub(0).sub(0), Constant(0.), boundary_x)
+            bc_sphere_disp_y = DirichletBC(self.Q.sub(0).sub(1), Constant(0.), boundary_y)
+            bc_sphere_disp_z = DirichletBC(self.Q.sub(0).sub(2), Constant(0.), boundary_z)
+            
+            bc_sphere_rot_y = DirichletBC(self.Q.sub(1), Constant((0., 0.)), boundary_y)
+            bc_sphere_rot_x = DirichletBC(self.Q.sub(1).sub(1), Constant(0.), boundary_x)
+            bc_sphere_rot_z = DirichletBC(self.Q.sub(1).sub(1), Constant(0.), boundary_z)
+            
+            self.bcs = [bc_sphere_disp_x, bc_sphere_disp_y, bc_sphere_disp_z, bc_sphere_rot_x, bc_sphere_rot_y, bc_sphere_rot_z]
+    
+        
     def boundary_conditions_n0(self):
         if self.geometry == "eighthsphere":
-            boundary_x = lambda x, on_boundary: near(x[0], 0., 1.e-6) and on_boundary
-            boundary_y = lambda x, on_boundary: near(x[1], 0., 1.e-6) and on_boundary
-            boundary_z = lambda x, on_boundary: near(x[2], 0., 1.e-6) and on_boundary
+            boundary_x = lambda x, on_boundary: near(x[0], 0., 1.e-3) and on_boundary
+            boundary_y = lambda x, on_boundary: near(x[1], 0., 1.e-3) and on_boundary
+            boundary_z = lambda x, on_boundary: near(x[2], 0., 1.e-3) and on_boundary
             
             bc_n0_x = DirichletBC(self.V_normal.sub(0), Constant(0.), boundary_x)
             bc_n0_y = DirichletBC(self.V_normal.sub(1), Constant(0.), boundary_y)
             bc_n0_z = DirichletBC(self.V_normal.sub(2), Constant(0.), boundary_z)
-            bcs = [bc_n0_x, bc_n0_y, bc_n0_z]
+            bcs_n0 = [bc_n0_x, bc_n0_y, bc_n0_z]
         
         elif self.geometry == "Hemisphere":
             boundary_z = lambda x, on_boundary: on_boundary
-            bcs = [DirichletBC(self.V_normal.sub(2), Constant(0.), boundary_z)]
+            bcs_n0 = [DirichletBC(self.V_normal.sub(2), Constant(0.), boundary_z)]
 
-        return bcs
+        return bcs_n0
         
     def set_solver(self):
         self.solver = PETScSNESSolver()
@@ -264,9 +328,11 @@ class NonlinearProblem_metric_from_mesh:
 
     def set_director(self):
         n = self.n0
-        self.beta0 = project(as_vector([atan_2(-n[1], sqrt(n[0]**2 + n[2]**2)),
-                                      atan_2(n[0], n[2])]), VectorFunctionSpace(self.mesh, "P", 1, dim = 2))
+#        self.beta0 = project(as_vector([atan_2(-n[1], sqrt(n[0]**2 + n[2]**2)),
+#                                      atan_2(n[0], n[2])]), VectorFunctionSpace(self.mesh, "P", 1, dim = 2))
 
+        self.beta0 = project(as_vector([atan_2(-n[1], sqrt(n[0]**2 + n[2]**2)),
+                                        atan_2(n[0], n[2]+DOLFIN_EPS)]), self.V_beta)
         # The director in the initial configuration is then written as ::
         self.d0 = self.director(self.beta0)
 
@@ -324,16 +390,30 @@ class NonlinearProblem_metric_from_mesh:
         if self.hypothesis == "finite strain":
             return self.F*self.d - self.grad_(self.phi0)*self.d0
         elif self.hypothesis == "small strain":
-            return self.g_u*self.d0 + self.F0*self.d_director(self.beta0, self.beta_) - self.grad_(self.phi0)*self.d0
+            return self.g_u*self.d0 + self.F0*self.d_director(self.beta0, self.beta_) #- self.grad_(self.phi0)*self.d0
 
+    
     def set_thickness(self, dt):
+        D_Delta= inner(self.a0_contra, self.membrane_deformation())
+        
         if self.LE:
-            pass
-        else:
-            pass
-#            D_Delta= inner(self.a0_contra, self.membrane_deformation())
-#            self.thickness.assign(project((self.thickness/dt + self.vp)/(1/dt + D_Delta + self.kd + self.vp*self.H),self.V_thickness))
+            normal_velocity = Function(self.V_normal)
+            normal_velocity.assign(project(dot(outer(self.n0,self.n0),self.u_), self.V_normal))  # The mesh motion is simply the normal component of the displacement
 
+            bcs = self.boundary_conditions_n0()
+            for bc in bcs:
+                bc.apply(normal_velocity.vector())
+
+            a = inner(self.q_.sub(0, True) - normal_velocity, grad(self.thickness))
+#            print("Shape of grad T: ", grad(self.thickness).ufl_shape)
+            self.thickness.assign(project((self.thickness  + dt*(- a - self.thickness*D_Delta - self.kd*self.thickness + self.vp*(1-0.*self.H*self.thickness))),self.V_thickness))
+        
+        else:
+            self.thickness.assign(project((self.thickness/dt + self.vp)/(1/dt + D_Delta + self.kd + self.vp*self.H),self.V_thickness))
+
+   
+   
+   
     def set_energies(self):
         # Gaussian signal in the middle of the plate and uniform across one of the directions
         sig_q = 0.2;
@@ -369,9 +449,9 @@ class NonlinearProblem_metric_from_mesh:
         self.T = self.thickness*self.mu*as_tensor(self.a0_contra[i,j]*self.shear_deformation()[j], [i])
 
         self.passive_membrane_energy = 0.5*self.thickness*self.mu* inner(as_tensor(A_[i,j,l,m]*self.membrane_deformation()[l,m], [i,j]), self.membrane_deformation())
-        self.passive_bending_energy = (self.thickness**3/3.0)*self.mu* inner(as_tensor(A_[i,j,l,m]*self.bending_deformation()[l,m], [i,j]), self.bending_deformation())
+        self.passive_bending_energy = 0.5*(self.thickness**3/3.0)*self.mu* inner(as_tensor(A_[i,j,l,m]*self.bending_deformation()[l,m], [i,j]), self.bending_deformation())
         self.polymerization_membrane = 0.5*self.thickness*self.mu* inner(as_tensor(self.a0_contra[i,j]*(self.kd - self.vp/self.thickness), [i,j]), self.membrane_deformation())
-        self.polymerization_bending = (self.thickness**3/3.0)*self.mu* inner(as_tensor((self.H*self.a0_contra[i,j] - self.b0[i,j])*(self.kd-self.vp/self.thickness), [i,j]), self.bending_deformation())
+        self.polymerization_bending = 0.5*(self.thickness**3/3.0)*self.mu* inner(as_tensor((self.H*self.a0_contra[i,j] - self.b0[i,j])*(self.kd-self.vp/self.thickness), [i,j]), self.bending_deformation())
 
         self.psi_m = 0.5*inner(self.N, self.membrane_deformation())
         self.psi_b = 0.5*inner(self.M, self.bending_deformation())
@@ -395,6 +475,7 @@ class NonlinearProblem_metric_from_mesh:
     def initialize(self):
         self.set_shape()
         self.set_local_frame()
+        self.set_boundary_conditions()
         self.set_director()
         self.set_fundamental_forms()
         self.set_kinematics_and_fundamental_forms()
@@ -402,7 +483,9 @@ class NonlinearProblem_metric_from_mesh:
         self.total_energy()
 
     def evolution(self, dt):
+    
         self.set_thickness(dt)
+    
         displacement_mesh = Function(self.V_phi)
         displacement_mesh.interpolate(self.q_.sub(0, True))
         displacement_mesh.vector()[:] *= dt
@@ -410,7 +493,6 @@ class NonlinearProblem_metric_from_mesh:
 
         if self.LE:
             normal_displacement = Function(self.V_phi)
-#            normal_displacement.interpolate(self.q_.sub(0, True))
 
             normal_displacement.assign(project(inner(self.q_.sub(0, True),self.n0)*self.n0,self.V_phi))
 #            normal_displacement.assign(project(dot(displacement_mesh, self.n0)*self.n0, self.V_normal))
@@ -423,12 +505,11 @@ class NonlinearProblem_metric_from_mesh:
 
         else:
             ALE.move(self.mesh, displacement_mesh)
-
         self.initialize()
 
 
-    def solve(self, bcs):
-        problem = CustomNonlinearProblem(self.dPi, self.J, bcs)
+    def solve(self):
+        problem = CustomNonlinearProblem(self.dPi, self.J, self.bcs)
         return self.solver.solve(problem, self.q_.vector())
 
 
@@ -536,6 +617,7 @@ class NonlinearProblem_metric_from_mesh:
 
 
         self.set_local_frame()
+        self.set_boundary_conditions()
         self.set_director()
         self.set_kinematics_and_fundamental_forms()
         self.set_energies()
@@ -556,7 +638,7 @@ vp = 0.08
 q_11, q_12, q_22 = 1.0/6, 0., 1./6
 Q_tensor = as_tensor([[1./6, 0.0], [0.0, 1./6]])
 q_33 = -1./3
-zeta = 30.
+zeta = 20.
 
 output_dir = "output/"
 if not os.path.exists(output_dir):
@@ -604,25 +686,6 @@ problem = NonlinearProblem_metric_from_mesh(mesh, mmesh, thick = thick, mu = mu,
                                             fname = filename, hypothesis="small strain", geometry = geometry, LE = LE)
 
 
-boundary = lambda x, on_boundary: on_boundary
-boundary_x = lambda x, on_boundary: near(x[0], 0., 1.e-3) and on_boundary
-boundary_y = lambda x, on_boundary: near(x[1], 0., 1.e-3) and on_boundary
-boundary_z = lambda x, on_boundary: near(x[2], 0., 1.e-3) and on_boundary
-
-if geometry == "Hemisphere":
-    bc_sphere_disp = DirichletBC(problem.Q.sub(0).sub(2), Constant(0.), boundary)
-    bc_sphere_rot = DirichletBC(problem.Q.sub(1).sub(1), Constant(0.), boundary)
-    bcs = [bc_sphere_disp, bc_sphere_rot]
-elif geometry == "eighthsphere":
-    bc_sphere_disp_x = DirichletBC(problem.Q.sub(0).sub(0), Constant(0.), boundary_x)
-    bc_sphere_disp_y = DirichletBC(problem.Q.sub(0).sub(1), Constant(0.), boundary_y)
-    bc_sphere_disp_z = DirichletBC(problem.Q.sub(0).sub(2), Constant(0.), boundary_z)
-    
-    bc_sphere_rot_y = DirichletBC(problem.Q.sub(1), Constant((0., 0.)), boundary_y)
-    bc_sphere_rot_x = DirichletBC(problem.Q.sub(1).sub(1), Constant(0.), boundary_x)
-    bc_sphere_rot_z = DirichletBC(problem.Q.sub(1).sub(1), Constant(0.), boundary_z)
-
-    bcs = [bc_sphere_disp_x, bc_sphere_disp_y, bc_sphere_disp_z, bc_sphere_rot_x, bc_sphere_rot_y, bc_sphere_rot_z]
 
 
 
@@ -634,9 +697,9 @@ dt_min = 1e-3*dt_max
 i = 0
 
 if LE:
-    remeshing_frequency = 100 # remeshing every n time steps
+    remeshing_frequency = 60 # remeshing every n time steps
 else:
-    remeshing_frequency = 5 # remeshing every n time steps
+    remeshing_frequency = 2 # remeshing every n time steps
 
 
 class K(UserExpression):
@@ -649,35 +712,21 @@ class K(UserExpression):
 furrow_indicator = K(degree = 0)
 
 
-#print(projected_normal.ufl_shape)
 
-dissipation_membrane = np.array([])
-passive_dissipation_membrane = np.array([])
-dissipation_bending = np.array([])
-passive_dissipation_bending = np.array([])
-dissipation_shear = np.array([])
-Time_series = np.array([])
-volume = np.array([])
-furrow_radius = np.array([])
-polymerization_membrane = np.array([])
-polymerization_bending = np.array([])
-furrow_dissipation_m = np.array([])
-furrow_dissipation_b = np.array([])
-
-
-furrow_passive_dissipation_m = np.array([])
-furrow_passive_dissipation_b = np.array([])
-
-furrow_polymerization_m = np.array([])
-furrow_polymerization_b = np.array([])
 
 current_radius = 1.
 
 
 
+#filename = 'output/data.csv'
+hdr = 'Time;Volume;FurrowRadius;Dissipation_Membrane;Dissipation_Bending;Dissipation_Shear;Passive_Dissipation_Membrane;Passive_Dissipation_Bending;Polymerization_Membrane;Polymerization_Bending;Furrow_Dissipation_Membrane;Furrow_Dissipation_Bending;Furrow_passive_dissipation_m;Furrow_passive_dissipation_b;Furrow_polymerization_m;Furrow_polymerization_b'
+
+f=open('output/Data.csv','w')
+np.savetxt(f,[], header= hdr)
 
 problem.write(time, u = True, beta = True, phi = True, frame = True, epaisseur = True, activity = True, energies = True)
 while time < Time:
+
     if dt < dt_min:# or current_radius < 0.05 : # If the furrow radius is smaller than twice the thickness it means that it should have stopped dividing!
         problem.write(time+dt, u = True, beta = True, phi = True, frame = True, epaisseur = True, activity = True, energies = False)
         break
@@ -686,7 +735,7 @@ while time < Time:
         i += 1
         print("Iteration {}. Time step : {}".format(i, dt))
         # problem.evolution(dt/2)
-        niter, _ = problem.solve(bcs)
+        niter, _ = problem.solve()
         converged = True
     except:
         # problem.evolution(-dt/2)
@@ -694,46 +743,13 @@ while time < Time:
         converged = False
     else:   # execute if no convergence issues
         problem.evolution(dt)
-        if i % 5 == 0:
+        if i % 2 == 0:
             problem.write(time + dt, u = True, beta = True, phi = True, frame = True, epaisseur = True, activity = True, energies = True)
         
             print("rmin={}, rmax={}, hmin={}, hmax={}".format(
                 problem.mesh.rmin(), problem.mesh.rmax(), problem.mesh.hmin(), problem.mesh.hmax()))
-            
-            # Volume
-            current_volume = 2*assemble(dot(problem.phi0, problem.n0)*problem.dx(domain=problem.mesh))/pi
-            volume = np.append(volume, current_volume)
-            
-            # Furrow radius
-            boundary_subdomains = MeshFunction("size_t", problem.mesh, problem.mesh.topology().dim() - 1)
-            boundary_subdomains.set_all(0)
-            AutoSubDomain(boundary_y).mark(boundary_subdomains, 1)
-            dss = ds(subdomain_data=boundary_subdomains)
-            current_radius = assemble((2./pi) * dss(1)(domain = problem.mesh))
-            furrow_radius = np.append(furrow_radius, current_radius )
-            print("radius of the furrow:", current_radius)
-            
-            # Dissipation
-            dissipation_membrane  = np.append(dissipation_membrane,assemble(problem.psi_m*problem.dx(domain=problem.mesh)))
-            passive_dissipation_membrane  = np.append(passive_dissipation_membrane,
-                                                      assemble(problem.passive_membrane_energy*problem.dx(domain=problem.mesh)))
-            dissipation_bending   = np.append(dissipation_bending, assemble(problem.psi_b*problem.dx(domain=problem.mesh)))
-            passive_dissipation_bending   =  np.append(passive_dissipation_bending,
-                                                       assemble(problem.passive_bending_energy*problem.dx(domain=problem.mesh)))
-            dissipation_shear     = np.append(dissipation_shear, assemble(problem.psi_s*problem.dx(domain=problem.mesh)))
-            polymerization_membrane = np.append(polymerization_membrane, assemble(problem.polymerization_membrane*problem.dx(domain = problem.mesh)))
-            polymerization_bending = np.append(polymerization_bending, assemble(problem.polymerization_bending*problem.dx(domain = problem.mesh)))
-            
-            furrow_dissipation_m = np.append(furrow_dissipation_m, assemble(problem.psi_m*furrow_indicator*problem.dx(domain=problem.mesh)))
-            furrow_dissipation_b = np.append(furrow_dissipation_b, assemble(problem.psi_b*furrow_indicator*problem.dx(domain=problem.mesh)))
-            
-            furrow_passive_dissipation_m = np.append(furrow_passive_dissipation_m, assemble(problem.passive_membrane_energy*furrow_indicator*problem.dx(domain=problem.mesh)))
-            furrow_passive_dissipation_b = np.append(furrow_passive_dissipation_b, assemble(problem.passive_bending_energy*furrow_indicator*problem.dx(domain=problem.mesh)))
-            
-            furrow_polymerization_m = np.append(furrow_polymerization_m, assemble(furrow_indicator*problem.polymerization_membrane*problem.dx(domain = problem.mesh)))
-            furrow_polymerization_b = np.append(furrow_polymerization_b, assemble(furrow_indicator*problem.polymerization_bending*problem.dx(domain = problem.mesh)))
-            Time_series = np.append(Time_series, time)
 
+        save_data(f, problem)
         time +=dt
 
 
@@ -751,108 +767,10 @@ while time < Time:
             else:
                 problem.mesh_refinement()
                 print("From here it should be a new problem...")
-
-            # Re-definition of the boundary for the new mesh
-            boundary = lambda x, on_boundary: on_boundary
-            boundary_x = lambda x, on_boundary: near(x[0], 0., 1.e-3) and on_boundary
-            boundary_y = lambda x, on_boundary: near(x[1], 0., 1.e-3) and on_boundary
-            boundary_z = lambda x, on_boundary: near(x[2], 0., 1.e-3) and on_boundary
-
-            if geometry == "Hemisphere":
-                bc_sphere_disp = DirichletBC(problem.Q.sub(0).sub(2), Constant(0.), boundary)
-                bc_sphere_rot = DirichletBC(problem.Q.sub(1).sub(1), Constant(0.), boundary)
-                
-                bcs = [bc_sphere_disp, bc_sphere_rot]
-
-            elif geometry == "eighthsphere":
-                bc_sphere_disp_x = DirichletBC(problem.Q.sub(0).sub(0), Constant(0.), boundary_x)
-                bc_sphere_disp_y = DirichletBC(problem.Q.sub(0).sub(1), Constant(0.), boundary_y)
-                bc_sphere_disp_z = DirichletBC(problem.Q.sub(0).sub(2), Constant(0.), boundary_z)
-                
-                bc_sphere_rot_y = DirichletBC(problem.Q.sub(1), Constant((0., 0.)), boundary_y)
-                bc_sphere_rot_x = DirichletBC(problem.Q.sub(1).sub(1), Constant(0.), boundary_x)
-                bc_sphere_rot_z = DirichletBC(problem.Q.sub(1).sub(1), Constant(0.), boundary_z)
-                
-                bcs = [bc_sphere_disp_x, bc_sphere_disp_y, bc_sphere_disp_z, bc_sphere_rot_x, bc_sphere_rot_y, bc_sphere_rot_z]
     except:
         break
         
-
-# SAVING DATA
-data = np.column_stack((Time_series, volume, furrow_radius, dissipation_membrane, dissipation_bending, dissipation_shear,
-                            passive_dissipation_membrane, passive_dissipation_bending, polymerization_membrane, polymerization_bending, furrow_dissipation_m, furrow_dissipation_b, furrow_passive_dissipation_m, furrow_passive_dissipation_b, furrow_polymerization_m, furrow_polymerization_b ))
-filename = 'output/data.csv'
-hdr = 'Time;Volume;FurrowRadius;Dissipation_Membrane;Dissipation_Bending;Dissipation_Shear;Passive_Dissipation_Membrane;Passive_Dissipation_Bending;Polymerization_Membrane;Polymerization_Bending;Furrow_Dissipation_Membrane;Furrow_Dissipation_Bending;Furrow_passive_dissipation_m;Furrow_passive_dissipation_b;Furrow_polymerization_m;Furrow_polymerization_b'
-
-np.savetxt(filename, data, header = hdr, delimiter=';')
+f.close()
 
 
 print("It ended at iteration {}, and Time {}".format(i, time))
-
-# print(dissipation_bending)
-plt.plot(Time_series, passive_dissipation_membrane, label = 'Psi_m')
-plt.xlabel("time")
-plt.ylabel("Dissipation")
-plt.legend()
-plt.title('Passive dissipation')
-plt.savefig("output/passive_membrane_disspation.png")
-
-plt.figure()
-plt.plot(Time_series, passive_dissipation_bending, label = 'Psi_b')
-plt.plot(Time_series, dissipation_shear, label = 'Psi_s')
-plt.xlabel("time")
-plt.ylabel("Dissipation")
-plt.title('Passive dissipation')
-plt.legend()
-plt.savefig("output/passive_bending_shear_disspation.png")
-
-
-plt.figure()
-plt.plot(Time_series, polymerization_membrane, label = 'm')
-plt.xlabel("time")
-plt.ylabel("Dissipation of polymerization")
-plt.title('Polymerization membrane')
-plt.legend()
-plt.savefig("output/polymerization_membrane.png")
-
-plt.figure()
-plt.plot(Time_series, polymerization_bending, label = 'b')
-plt.xlabel("time")
-plt.ylabel("Dissipation of polymerization")
-plt.title('Polymerization bending')
-plt.legend()
-plt.savefig("output/polymerization_bending.png")
-
-
-plt.figure()
-plt.plot(Time_series, dissipation_membrane  - passive_dissipation_membrane - polymerization_membrane, label = 'Psi_m')
-plt.title('Active dissipation')
-plt.xlabel("time")
-plt.ylabel("Dissipation")
-plt.legend()
-plt.savefig("output/active_membrane_disspation.png")
-
-
-
-plt.figure()
-plt.plot(Time_series, dissipation_bending - passive_dissipation_bending - polymerization_bending, label = 'Psi_b')
-plt.title('Active dissipation')
-plt.xlabel("time")
-plt.ylabel("Dissipation")
-plt.legend()
-plt.savefig("output/active_bending_disspation.png")
-
-
-plt.figure()
-plt.plot(Time_series,volume)
-plt.title('Volume conservation ?')
-plt.xlabel("time")
-plt.ylabel("Volume/V0")
-plt.savefig("output/volume.png")
-
-plt.figure()
-plt.plot(Time_series,furrow_radius)
-plt.title('Time evolution of the furrow')
-plt.xlabel("time")
-plt.ylabel("Radius")
-plt.savefig("output/Furrow.png")
