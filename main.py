@@ -1,13 +1,13 @@
 import os, sys
 
 import numpy as np
-import matplotlib.pyplot as plt
+#import matplotlib.pyplot as plt
 
 from dolfin import *
 from ufl import Index, unit_vector, shape, Jacobian, JacobianDeterminant, atan_2, Max
-from mshr import *
-from mpl_toolkits.mplot3d import Axes3D
-from adapt_fix import adapt
+#from mshr import *
+#from mpl_toolkits.mplot3d import Axes3D
+#from adapt_fix import adapt
 import subprocess
 
 import meshio
@@ -57,25 +57,31 @@ def save_data(filename, problem):
     # Volume
     
     current_volume = 2*assemble(dot(problem.phi0, problem.n0)*problem.dx(domain=problem.mesh))/pi
-
-    # Furrow radius
-    boundary_subdomains = MeshFunction("size_t", problem.mesh, problem.mesh.topology().dim() - 1)
-    boundary_subdomains.set_all(0)
-    AutoSubDomain(boundary_y).mark(boundary_subdomains, 1)
-    dss = ds(subdomain_data=boundary_subdomains)
-    current_radius = assemble((2./pi) * dss(1)(domain = problem.mesh))
-    #            furrow_radius = np.append(furrow_radius, current_radius )
-    print("radius of the furrow:", current_radius)
+    if problem.geometry == "Hemisphere":
+        current_radius = 0
+    elif problem.geometry == "eighthsphere":
+        # Furrow radius
+        boundary_subdomains = MeshFunction("size_t", problem.mesh, problem.mesh.topology().dim() - 1)
+        boundary_subdomains.set_all(0)
+        AutoSubDomain(boundary_y).mark(boundary_subdomains, 1)
+        dss = ds(subdomain_data=boundary_subdomains)
+        current_radius = assemble((2./pi) * dss(1)(domain = problem.mesh))
+        #            furrow_radius = np.append(furrow_radius, current_radius )
+        print("radius of the furrow:", current_radius)
 
     # Dissipation
-    dissipation_membrane  = assemble(problem.psi_m*problem.dx(domain=problem.mesh))
-    passive_dissipation_membrane  = assemble(problem.passive_membrane_energy*problem.dx(domain=problem.mesh))
-    dissipation_bending   = assemble(problem.psi_b*problem.dx(domain=problem.mesh))
-    passive_dissipation_bending   =  assemble(problem.passive_bending_energy*problem.dx(domain=problem.mesh))
+    membrane_total_dissipation  = assemble(problem.psi_m*problem.dx(domain=problem.mesh))
+    membrane_passive_dissipation  = assemble(problem.passive_membrane_energy*problem.dx(domain=problem.mesh))
+    membrane_active_dissipation = assemble(problem.active_membrane_energy*problem.dx(domain=problem.mesh))
+    membrane_polymerization_dissipation = assemble(problem.polymerization_membrane*problem.dx(domain = problem.mesh))
+    
+    bending_total_dissipation   = assemble(problem.psi_b*problem.dx(domain=problem.mesh))
+    bending_passive_dissipation   =  assemble(problem.passive_bending_energy*problem.dx(domain=problem.mesh))
+    bending_active_dissipation = assemble(problem.active_bending_energy*problem.dx(domain=problem.mesh))
+    bending_polymerization =  assemble(problem.polymerization_bending*problem.dx(domain = problem.mesh))
+    
     dissipation_shear     = assemble(problem.psi_s*problem.dx(domain=problem.mesh))
-    polymerization_membrane = assemble(problem.polymerization_membrane*problem.dx(domain = problem.mesh))
-    polymerization_bending =  assemble(problem.polymerization_bending*problem.dx(domain = problem.mesh))
-
+    
     furrow_dissipation_m = assemble(problem.psi_m*furrow_indicator*problem.dx(domain=problem.mesh))
     furrow_dissipation_b = assemble(problem.psi_b*furrow_indicator*problem.dx(domain=problem.mesh))
 
@@ -86,8 +92,7 @@ def save_data(filename, problem):
     furrow_polymerization_b =  assemble(furrow_indicator*problem.polymerization_bending*problem.dx(domain = problem.mesh))
 
 
-    data = np.column_stack((time, current_volume , current_radius, dissipation_membrane, dissipation_bending, dissipation_shear,
-    passive_dissipation_membrane, passive_dissipation_bending, polymerization_membrane, polymerization_bending, furrow_dissipation_m, furrow_dissipation_b, furrow_passive_dissipation_m, furrow_passive_dissipation_b, furrow_polymerization_m, furrow_polymerization_b ))
+    data = np.column_stack((time, current_volume , current_radius, membrane_total_dissipation, membrane_passive_dissipation, membrane_active_dissipation, membrane_polymerization_dissipation, bending_total_dissipation, bending_passive_dissipation, bending_active_dissipation, bending_polymerization, dissipation_shear))
 
     np.savetxt(filename, data,  delimiter=';')
 
@@ -122,7 +127,7 @@ def local_frame(mesh, normal=None):
     
 
 class NonlinearProblem_metric_from_mesh:
-    def __init__(self, mesh, mmesh, thick, mu, zeta, kd, vp, vol_ini, fname = None,
+    def __init__(self, mesh, mmesh, thick, mu, zeta, kd, vp, vol_ini, dt, time = 0, fname = None,
                  hypothesis="small strain", geometry = "eighthsphere", LE = "False"):
         self.mesh = mesh
         self.mmesh = mmesh
@@ -132,6 +137,8 @@ class NonlinearProblem_metric_from_mesh:
         self.kd = kd
         self.vp = vp
         self.vol_ini = vol_ini
+        self.time = time
+        self.dt = dt
         self.hypothesis = hypothesis
         self.geometry = geometry
         self.set_solver()
@@ -279,7 +286,7 @@ class NonlinearProblem_metric_from_mesh:
         self.solver = PETScSNESSolver()
         self.solver.parameters["method"] = "newtonls"
         self.solver.parameters['maximum_iterations'] = 20
-        self.solver.parameters['linear_solver'] = "mumps"
+        self.solver.parameters['linear_solver'] = "lu"
         self.solver.parameters['absolute_tolerance'] = 1E-6
         self.solver.parameters['relative_tolerance'] = 1E-6
 #        self.solver = NewtonSolver()
@@ -331,8 +338,8 @@ class NonlinearProblem_metric_from_mesh:
 #        self.beta0 = project(as_vector([atan_2(-n[1], sqrt(n[0]**2 + n[2]**2)),
 #                                      atan_2(n[0], n[2])]), VectorFunctionSpace(self.mesh, "P", 1, dim = 2))
 
-        self.beta0 = project(as_vector([atan_2(-n[1], sqrt(n[0]**2 + n[2]**2)),
-                                        atan_2(n[0], n[2]+DOLFIN_EPS)]), self.V_beta)
+        self.beta0 = project(as_vector([atan_2(-n[1]-DOLFIN_EPS, sqrt(n[0]**2 + n[2]**2)),
+                                        atan_2(n[0] + DOLFIN_EPS, n[2] + DOLFIN_EPS)]), self.V_beta)
         # The director in the initial configuration is then written as ::
         self.d0 = self.director(self.beta0)
 
@@ -356,8 +363,9 @@ class NonlinearProblem_metric_from_mesh:
         self.F = self.grad_(self.u_) + self.grad_(self.phi0)
         self.F0 = self.grad_(self.phi0)
         self.g_u = self.grad_(self.u_)
+    
 
-        self.d = self.director(self.beta_ + self.beta0)
+        self.d = self.director(self.beta_*self.dt + self.beta0)
 
         self.a0 = as_tensor([[dot(self.a1, self.a1), dot(self.a1, self.a2)],\
                             [dot(self.a2, self.a1), dot(self.a2, self.a2)]])
@@ -374,23 +382,28 @@ class NonlinearProblem_metric_from_mesh:
         if self.hypothesis == "finite strain":
             return 0.5*(self.F*self.F.T - self.a0)
         elif self.hypothesis == "small strain":
-            return 0.5*(self.F0*self.F0.T - self.a0 + self.F0*self.g_u.T + self.g_u*self.F0.T)
+#            return 0.5*(self.F0*self.F0.T - self.a0 + self.F0*self.g_u.T + self.g_u*self.F0.T)
+            return 0.5*(self.F0*self.g_u.T + self.g_u*self.F0.T)
+
 
     def bending_deformation(self):
         if self.hypothesis == "finite strain":
             return -0.5*(self.F*self.grad_(self.d).T + self.grad_(self.d)*self.F.T) - self.b0
         elif self.hypothesis == "small strain":
             dd = self.d_director(self.beta0, self.beta_)
-            return -0.5*(self.F0*self.grad_(self.d0).T + self.grad_(self.d0)*self.F0.T +
-                         self.g_u*self.grad_(self.d0).T + self.grad_(self.d0)*self.g_u.T +
-                         self.F0*self.grad_(dd).T + self.grad_(dd)*self.F0.T) - self.b0
+            return -0.5*(self.g_u*self.grad_(self.d0).T + self.grad_(self.d0)*self.g_u.T +
+                        self.F0*self.grad_(dd).T + self.grad_(dd)*self.F0.T)
+#
+#            return -0.5*(self.F0*self.grad_(self.d0).T + self.grad_(self.d0)*self.F0.T +
+#                         self.g_u*self.grad_(self.d0).T + self.grad_(self.d0)*self.g_u.T +
+#                         self.F0*self.grad_(dd).T + self.grad_(dd)*self.F0.T) - self.b0
 
 
     def shear_deformation(self):
         if self.hypothesis == "finite strain":
             return self.F*self.d - self.grad_(self.phi0)*self.d0
         elif self.hypothesis == "small strain":
-            return self.g_u*self.d0 + self.F0*self.d_director(self.beta0, self.beta_) #- self.grad_(self.phi0)*self.d0
+            return self.g_u*self.d0 + self.F0*self.d_director(self.beta0, self.beta_)
 
     
     def set_thickness(self, dt):
@@ -410,6 +423,7 @@ class NonlinearProblem_metric_from_mesh:
         
         else:
             self.thickness.assign(project((self.thickness/dt + self.vp)/(1/dt + D_Delta + self.kd + self.vp*self.H),self.V_thickness))
+#            self.thickness.assign(project((self.thickness/dt +self.vp)/(1/dt + D_Delta+self.kd),self.V_thickness))
 
    
    
@@ -418,9 +432,9 @@ class NonlinearProblem_metric_from_mesh:
         # Gaussian signal in the middle of the plate and uniform across one of the directions
         sig_q = 0.2;
         basal = 1.
-    
         self.Q_Expression = Expression(('basal + (zeta - 1.)*exp(-0.5*(x[1]*x[1])/(sig_q*sig_q))'), sig_q = sig_q, basal = basal, zeta = self.zeta, degree = 2)
 
+            
         self.Q_field = interpolate(self.Q_Expression, self.V_thickness)
         self.q_11, self.q_12, self.q_22, self.q_33 = 1.0/6, 0., 1./6, -1./3
         self.Q_tensor = as_tensor([[1./6, 0.0], [0.0, 1./6]])
@@ -439,23 +453,43 @@ class NonlinearProblem_metric_from_mesh:
         C_ = as_tensor(8*self.H*(0.5*self.a0_contra[i,j]*self.a0_contra[l,m] + 0.25*(self.a0_contra[i,l]*self.a0_contra[j,m] + self.a0_contra[i,m]*self.a0_contra[j,l])) - self.a0_contra[i,j]*self.b0[l,m] - self.a0_contra[l,m]*self.b0[i,j] - 0.5*(self.a0_contra[i,l]*self.b0[j,m]+self.a0_contra[j,l]*self.b0[i,m] + self.a0_contra[i,m]*self.b0[j,l]+self.a0_contra[j,m]*self.b0[i,l])
         ,[i,j,l,m])
         
-        self.N = self.thickness*self.mu *as_tensor(A_[i,j,l,m]*self.membrane_deformation()[l,m] + self.a0_contra[i,j]*(self.kd - self.vp/self.thickness), [i,j])+ \
-                (self.thickness**3/12.0)*self.mu*as_tensor(C_[i,j,l,m]*self.bending_deformation()[l,m],[i,j])+\
+        Q_alphabeta = as_tensor((self.a0_contra[i,l]*self.a0_contra[j,m]*self.Q_tensor[l,m] - self.a0_contra[i,j]*self.q_33),[i,j])
+        
+
+#        self.N = self.thickness*self.mu*as_tensor(A_[i,j,l,m]*self.membrane_deformation()[l,m]
+#        + self.a0_contra[i,j]*(self.kd - self.vp/self.thickness), [i,j])+ \
+#            self.Q_field*self.thickness*as_tensor((self.a0_contra[i,l]*self.a0_contra[j,m]*self.Q_tensor[l,m] - self.a0_contra[i,j]*self.q_33),[i,j])\
+#                +(self.thickness**3/12.0)*self.mu*as_tensor(C_[i,j,l,m]*self.bending_deformation()[l,m],[i,j])
+#
+#        self.M = (self.thickness**3/3.0)*self.mu*as_tensor(A_[i,j,l,m]*self.bending_deformation()[l,m] + B_[i,j,l,m]*self.membrane_deformation()[l,m] + (self.H*self.a0_contra[i,j] - self.b0[i,j])*(self.kd-self.vp/self.thickness),[i,j])\
+#            + (self.thickness**3/12.)*C_active*self.Q_field
+        
+        # Un-coupled system
+        self.N = self.thickness*self.mu*as_tensor(A_[i,j,l,m]*self.membrane_deformation()[l,m]
+        + self.a0_contra[i,j]*(self.kd - self.vp/self.thickness), [i,j])+ \
             self.Q_field*self.thickness*as_tensor((self.a0_contra[i,l]*self.a0_contra[j,m]*self.Q_tensor[l,m] - self.a0_contra[i,j]*self.q_33),[i,j])
-
-        self.M = (self.thickness**3/3.0)*self.mu*as_tensor(A_[i,j,l,m]*self.bending_deformation()[l,m] + B_[i,j,l,m]*self.membrane_deformation()[l,m] + (self.H*self.a0_contra[i,j] - self.b0[i,j])*(self.kd-self.vp/self.thickness),[i,j])\
+            
+        self.M = (self.thickness**3/3.0)*self.mu*as_tensor(A_[i,j,l,m]*self.bending_deformation()[l,m]  + (self.H*self.a0_contra[i,j] - self.b0[i,j])*(self.kd-self.vp/self.thickness),[i,j])\
             + (self.thickness**3/12.)*C_active*self.Q_field
-
+            
         self.T = self.thickness*self.mu*as_tensor(self.a0_contra[i,j]*self.shear_deformation()[j], [i])
 
-        self.passive_membrane_energy = 0.5*self.thickness*self.mu* inner(as_tensor(A_[i,j,l,m]*self.membrane_deformation()[l,m], [i,j]), self.membrane_deformation())
-        self.passive_bending_energy = 0.5*(self.thickness**3/3.0)*self.mu* inner(as_tensor(A_[i,j,l,m]*self.bending_deformation()[l,m], [i,j]), self.bending_deformation())
-        self.polymerization_membrane = 0.5*self.thickness*self.mu* inner(as_tensor(self.a0_contra[i,j]*(self.kd - self.vp/self.thickness), [i,j]), self.membrane_deformation())
+        self.passive_membrane_energy = 0.5*self.thickness*self.mu* inner(as_tensor(A_[i,j,l,m]*self.membrane_deformation()[l,m], [i,j]), self.membrane_deformation()) + 0.5*(self.thickness**3/12.0)*self.mu*inner(as_tensor(C_[i,j,l,m]*self.bending_deformation()[l,m],[i,j]), self.membrane_deformation())
+        
+        
+        self.active_membrane_energy = 0.5*self.Q_field*self.thickness*inner(as_tensor((self.a0_contra[i,l]*self.a0_contra[j,m]*self.Q_tensor[l,m] - self.a0_contra[i,j]*self.q_33),[i,j]), self.membrane_deformation())
+        
+        self.passive_bending_energy = 0.5*(self.thickness**3/3.0)*self.mu* inner(as_tensor(A_[i,j,l,m]*self.bending_deformation()[l,m] + B_[i,j,l,m]*self.membrane_deformation()[l,m], [i,j]), self.bending_deformation())
+        
+        self.active_bending_energy = 0.5*(self.thickness**3/12.)*inner(C_active*self.Q_field,self.bending_deformation())
+        
+        self.polymerization_membrane = 0.5*self.thickness*self.mu*inner(as_tensor(self.a0_contra[i,j]*(self.kd - self.vp/self.thickness), [i,j]), self.membrane_deformation())
+        
         self.polymerization_bending = 0.5*(self.thickness**3/3.0)*self.mu* inner(as_tensor((self.H*self.a0_contra[i,j] - self.b0[i,j])*(self.kd-self.vp/self.thickness), [i,j]), self.bending_deformation())
 
         self.psi_m = 0.5*inner(self.N, self.membrane_deformation())
         self.psi_b = 0.5*inner(self.M, self.bending_deformation())
-        self.psi_s = 10*0.5*inner(self.T, self.shear_deformation()) # Shear penalisation should multiply by 1e2 or 1e3
+        self.psi_s = 100*0.5*inner(self.T, self.shear_deformation()) # Shear penalisation should multiply by 1e2 or 1e3
 
     def total_energy(self):
         # Total Energy densities
@@ -465,7 +499,30 @@ class NonlinearProblem_metric_from_mesh:
         self.Pi = self.psi_m*sqrt(self.j0)*self.dx + self.psi_b*sqrt(self.j0)*self.dx + self.psi_s*sqrt(self.j0)*self.dx
         if self.geometry == "Hemisphere":
             self.Pi = self.Pi + dot(self.rigid_,self.u_)*sqrt(self.j0)*self.dx # Remotion of rigid motion
+       
+        """ Osmotic shock
+        if self.time > 0.10 and self.time <0.5 :
+            self.Pi = self.Pi + self.lbda_*(dot(self.u_, self.n0) + 0.5)*sqrt(self.j0)*self.dx # Volume conservation
+#        elif self.time >1.5 and self.time < 1.9:
+#            self.Pi = self.Pi + self.lbda_*(dot(self.u_, self.n0) - 0.5)*sqrt(self.j0)*self.dx # Volume conservation
+        else:
+            self.Pi = self.Pi + self.lbda_*dot(self.u_, self.n0)*sqrt(self.j0)*self.dx # Volume conservation """
+       
+       
+       
+        def ppos(x):
+            return (x+abs(x))/2.
+        
+        k_pen = 5e-2 # ~ 1e-2
+        d = Constant('2.1')
+        r = project(norm(self.phi0),self.V_thickness)
+
+        ConfinementPenalty = k_pen*(0.5*(abs(r - d) + r - d ) + 0.5*((r-d)/abs(r-d) + 1))*dot(self.phi0/r,self.u_)*sqrt(self.j0)*self.dx
+        
+        self.Pi = self.Pi + ConfinementPenalty
+        
         self.Pi = self.Pi + self.lbda_*dot(self.u_, self.n0)*sqrt(self.j0)*self.dx # Volume conservation
+        
         
         self.dPi = derivative(self.Pi, self.q_, self.q_t)# + self.lbda_*dot(self.u_t, self.n0)*sqrt(self.j0)*self.dx+ self.lbda_t*dot(self.u_, self.n0)*sqrt(self.j0)*self.dx
         self.J = derivative(self.dPi, self.q_, self.q)
@@ -483,7 +540,7 @@ class NonlinearProblem_metric_from_mesh:
         self.total_energy()
 
     def evolution(self, dt):
-    
+        self.time += dt
         self.set_thickness(dt)
     
         displacement_mesh = Function(self.V_phi)
@@ -513,7 +570,7 @@ class NonlinearProblem_metric_from_mesh:
         return self.solver.solve(problem, self.q_.vector())
 
 
-    def mesh_refinement(self ):
+    def mesh_refinement(self, type ):
         with XDMFFile("mesh.xdmf") as ffile:
              ffile.parameters["functions_share_mesh"] = True
              ffile.write(self.mesh)
@@ -524,9 +581,12 @@ class NonlinearProblem_metric_from_mesh:
 
         dist = 0.001 # controls the optimized mesh resolution (see https://www.mmgtools.org/mmg-remesher-try-mmg/mmg-remesher-options/mmg-remesher-option-hausd)
          # call mmgs with mesh optimization and Hausdorff distance
-        os.system('bin/mmgs_O3 -in mesh.mesh -out mesh_optimized.mesh -hausd {}'.format(dist)) # Hudson's
+        if type == "hausd":
+            os.system('bin/mmgs_O3 -in mesh.mesh -out mesh_optimized.mesh -hausd {}'.format(dist)) # Hudson's
 #        os.system('/opt/mmg/bin/mmgs_O3 -in mesh.mesh -out mesh_optimized.mesh -hausd {} -optim'.format(dist)) # Jeremy's
-
+        elif type == "hsiz":
+            dist = 0.02
+            os.system('bin/mmgs_O3 -in mesh.mesh -out mesh_optimized.mesh -hsiz {}'.format(dist)) # Hudson's
         # Convert back to .msh format using Gmsh
         os.system(' /Applications/Gmsh.app/Contents/MacOS/gmsh mesh_optimized.mesh -3 -o mesh_optimized.msh')
 #        os.system('gmsh mesh_optimized.mesh -3 -o mesh_optimized.msh') # Jeremy's
@@ -550,60 +610,42 @@ class NonlinearProblem_metric_from_mesh:
         self.mesh = new_mesh
         self.adapt_and_interpolate()
         
-    def mesh_refinement_hsiz(self ):
-        with XDMFFile("mesh.xdmf") as ffile:
-             ffile.parameters["functions_share_mesh"] = True
-             ffile.write(self.mesh)
-
-
-        # Convert to Medit format
-        os.system('meshio-convert --input-format xdmf --output-format medit mesh.xdmf mesh.mesh')
-
-        dist = 0.02 # controls the optimized mesh resolution (see https://www.mmgtools.org/mmg-remesher-try-mmg/mmg-remesher-options/mmg-remesher-option-hausd)
-         # call mmgs with mesh optimization and Hausdorff distance
-        os.system('bin/mmgs_O3 -in mesh.mesh -out mesh_optimized.mesh -hsiz {}'.format(dist)) # Hudson's
-#        os.system('/opt/mmg/bin/mmgs_O3 -in mesh.mesh -out mesh_optimized.mesh -hausd {} -optim'.format(dist)) # Jeremy's
-
-        # Convert back to .msh format using Gmsh
-        os.system(' /Applications/Gmsh.app/Contents/MacOS/gmsh mesh_optimized.mesh -3 -o mesh_optimized.msh')
-#        os.system('gmsh mesh_optimized.mesh -3 -o mesh_optimized.msh') # Jeremy's
-
-        fname = "mesh.xdmf"
-        fname_out = "mesh_optimized.xdmf"
-
-        # read back with meshio to remove cells and cell data and convert to xdmf
-        mmesh = meshio.read(fname_out.replace(".xdmf", ".msh"))
-        #mmesh.remove_lower_dimensional_cells()
-        #meshio.write(fname_out, meshio.Mesh(mmesh.points, mmesh.cells))
-        meshio.write(fname_out,
-                        meshio.Mesh(points = mmesh.points,
-                               cells = {'triangle': mmesh.cells_dict['triangle']}))
-        self.mmesh = meshio.read(fname_out)
-
-        # read in with FEniCS
-        new_mesh = Mesh()
-        with XDMFFile(fname_out) as ffile:
-            ffile.read(new_mesh)
-        self.mesh = new_mesh
-        self.adapt_and_interpolate()
-
     def adapt_and_interpolate(self):
 
-        self.q_ = Function(adapt(self.q_._cpp_object, self.mesh))
-        self.Q = self.q_.function_space()
-        self.V_phi = FunctionSpace(adapt(self.V_phi._cpp_object, self.mesh))
-        self.V_beta = FunctionSpace(adapt(self.V_beta._cpp_object, self.mesh))
-        self.V_thickness = FunctionSpace(adapt(self.V_thickness._cpp_object, self.mesh))
-        self.V_alpha = FunctionSpace(adapt(self.V_alpha._cpp_object, self.mesh))
-        self.VT = FunctionSpace(adapt(self.VT._cpp_object, self.mesh))
-        self.V_normal = FunctionSpace(adapt(self.V_normal._cpp_object, self.mesh))
+#        self.q_ = Function(adapt(self.q_._cpp_object, self.mesh))
+#        self.Q = self.q_.function_space()
+#        self.V_phi = FunctionSpace(adapt(self.V_phi._cpp_object, self.mesh))
+#        self.V_beta = FunctionSpace(adapt(self.V_beta._cpp_object, self.mesh))
+#        self.V_thickness = FunctionSpace(adapt(self.V_thickness._cpp_object, self.mesh))
+#        self.V_alpha = FunctionSpace(adapt(self.V_alpha._cpp_object, self.mesh))
+#        self.VT = FunctionSpace(adapt(self.VT._cpp_object, self.mesh))
+#        self.V_normal = FunctionSpace(adapt(self.V_normal._cpp_object, self.mesh))
 
+        P2 = FiniteElement("Lagrange", self.mesh.ufl_cell(), degree = 2)
+        P1 = FiniteElement("Lagrange", self.mesh.ufl_cell(), degree = 2)
+        CR1 = FiniteElement("CR", self.mesh.ufl_cell(), degree = 1)
+        R = FiniteElement("Real", self.mesh.ufl_cell(), degree=0)
+        if self.geometry == "Hemisphere":
+            element = MixedElement([VectorElement(P2, dim=3), VectorElement(CR1, dim=2), R, VectorElement(R, dim=3)])
+        elif self.geometry == "eighthsphere" :
+            element = MixedElement([VectorElement(P2, dim=3), VectorElement(CR1, dim=2), R])
+
+        self.Q = FunctionSpace(self.mesh, element)
+        self.V_phi = self.Q.sub(0).collapse() #FunctionSpace(self.mesh, VectorElement("P", mesh.ufl_cell(), degree = 2, dim = 3))
+        self.V_beta = self.Q.sub(1).collapse() #FunctionSpace(self.mesh, VectorElement("P", mesh.ufl_cell(), degree = 2, dim = 2))
+        self.V_thickness = FunctionSpace(self.mesh, P1)
+        self.V_alpha = FunctionSpace(self.mesh, "DG", 0)
+        self.VT = VectorFunctionSpace(self.mesh, "DG", 0, dim = 3)
+        self.V_normal = self.Q.sub(0).collapse()
+        
         # interpolate
         self.phi0 = interpolate(self.phi0, self.V_phi)
+        self.beta0 = interpolate(self.beta0,self.V_beta)
+
         self.q_ = interpolate(self.q_, self.Q)
         self.u_ = interpolate(self.q_.sub(0),self.Q.sub(0).collapse())
         self.beta_ = interpolate(self.q_.sub(1),self.Q.sub(1).collapse())
-        
+
         
         self.thickness = interpolate(self.thickness, self.V_thickness)
         self.Q_field = interpolate(self.Q_field, self.V_thickness)
@@ -679,25 +721,20 @@ print("Initial volume:", initial_volume)
 
 LE = False
 
-#print("cytokinesis-zeta_{}-kd_{}-vp_{}".format(zeta, kd, vp))
-filename = output_dir + xdmf_name.replace(".xdmf", "_results.xdmf")
-problem = NonlinearProblem_metric_from_mesh(mesh, mmesh, thick = thick, mu = mu, zeta = zeta,
-                                            kd = kd, vp = vp, vol_ini = initial_volume,
-                                            fname = filename, hypothesis="small strain", geometry = geometry, LE = LE)
 
 
 
 
 
 time = 0
-Time = 20
-dt = 50E-3
+Time = 50
+dt = 10E-3
 dt_max = dt
 dt_min = 1e-3*dt_max
 i = 0
 
 if LE:
-    remeshing_frequency = 60 # remeshing every n time steps
+    remeshing_frequency = 10 # remeshing every n time steps
 else:
     remeshing_frequency = 2 # remeshing every n time steps
 
@@ -709,6 +746,7 @@ class K(UserExpression):
             value[0] = 1.
         else:
             value[0] = 0.
+
 furrow_indicator = K(degree = 0)
 
 
@@ -716,10 +754,16 @@ furrow_indicator = K(degree = 0)
 
 current_radius = 1.
 
+#print("cytokinesis-zeta_{}-kd_{}-vp_{}".format(zeta, kd, vp))
+filename = output_dir + xdmf_name.replace(".xdmf", "_results.xdmf")
+problem = NonlinearProblem_metric_from_mesh(mesh, mmesh, thick = thick, mu = mu, zeta = zeta,
+                                            kd = kd, vp = vp, dt = dt, vol_ini = initial_volume,
+                                            fname = filename, hypothesis="small strain", geometry = geometry, LE = LE)
 
 
 #filename = 'output/data.csv'
-hdr = 'Time;Volume;FurrowRadius;Dissipation_Membrane;Dissipation_Bending;Dissipation_Shear;Passive_Dissipation_Membrane;Passive_Dissipation_Bending;Polymerization_Membrane;Polymerization_Bending;Furrow_Dissipation_Membrane;Furrow_Dissipation_Bending;Furrow_passive_dissipation_m;Furrow_passive_dissipation_b;Furrow_polymerization_m;Furrow_polymerization_b'
+
+hdr = 'time, current_volume , current_radius, membrane_total_dissipation, membrane_passive_dissipation, membrane_active_dissipation, membrane_polymerization_dissipation, bending_total_dissipation, bending_passive_dissipation, bending_active_dissipation, bending_polymerization, dissipation_shear'
 
 f=open('output/Data.csv','w')
 np.savetxt(f,[], header= hdr)
@@ -727,7 +771,7 @@ np.savetxt(f,[], header= hdr)
 problem.write(time, u = True, beta = True, phi = True, frame = True, epaisseur = True, activity = True, energies = True)
 while time < Time:
 
-    if dt < dt_min:# or current_radius < 0.05 : # If the furrow radius is smaller than twice the thickness it means that it should have stopped dividing!
+    if dt < dt_min:# or current_radius < 0.06 : # If the furrow radius is smaller than twice the thickness it means that it should have stopped dividing!
         problem.write(time+dt, u = True, beta = True, phi = True, frame = True, epaisseur = True, activity = True, energies = False)
         break
         # raise ValueError("Reached minimal time step")
@@ -758,15 +802,15 @@ while time < Time:
             dt = min(1.25*dt, dt_max)
         elif niter > 8:
             dt *= 0.75
+            
     try:    # always test for mesh refinement (every so time step or when failure)
         if i % remeshing_frequency == 0 or not(converged):
-            if problem.mesh.rmin() < 1e-3:
-                problem.mesh_refinement_hsiz()
+            if problem.mesh.rmin() < 1.5e-3:
+                problem.mesh_refinement("hsiz")
                 print("Uniform mesh!")
-
             else:
-                problem.mesh_refinement()
-                print("From here it should be a new problem...")
+                problem.mesh_refinement("hausd")
+                print("Hausdorff distance")
     except:
         break
         
