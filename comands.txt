@@ -1,0 +1,9 @@
+
+- The config.conf file specifying the parameters should be placed in data/run???? 
+
+- Inside data/run??? : conda activate fenicsproject 
+
+- To run: python3 ../../main.py 
+
+
+Notes: One should pay attention to the remeshing. The mmg files are different for MAC or LINUX systems.
