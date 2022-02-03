@@ -25,8 +25,7 @@ class CustomNonlinearProblem(NonlinearProblem):
 
 
 class NonlinearProblem_metric_from_mesh:
-    def __init__(self, mesh, mmesh, thick, mu, basal, zeta, gaussian_width, kd, vp, vol_ini, dt, time = 0, fname = None,
-                 hypothesis="small strain", geometry = "eighthsphere", LE = "False", polymerization = 1):
+    def __init__(self, mesh, mmesh, thick, mu, basal, zeta, gaussian_width, kd, vp, vol_ini, dt,  HyperOsmotic, HypoOsmotic,time = 0, fname = None):
         self.mesh = mesh
         self.mmesh = mmesh
         self.thick = thick
@@ -39,15 +38,17 @@ class NonlinearProblem_metric_from_mesh:
         self.vol_ini = vol_ini
         self.time = time
         self.dt = dt
-        self.polymerization = polymerization
-        self.hypothesis = hypothesis
-        self.geometry = geometry
         self.set_solver()
         self.set_functions_space()
         self.thickness.interpolate(thick)
+        self.dV = 0
+        self.HyperOsmotic = HyperOsmotic
+        self.HypoOsmotic = HypoOsmotic
+        
         self.initialize()
-        self.LE = LE
         self.fname = fname
+       
+        
         
         if fname is not None:
             self.output_file = XDMFFile(fname)
@@ -121,22 +122,14 @@ class NonlinearProblem_metric_from_mesh:
         P1 = FiniteElement("Lagrange", self.mesh.ufl_cell(), degree = 2)
         CR1 = FiniteElement("CR", self.mesh.ufl_cell(), degree = 1)
         R = FiniteElement("Real", self.mesh.ufl_cell(), degree=0)
-        if self.geometry == "Hemisphere":
-            element = MixedElement([VectorElement(P2, dim=3), VectorElement(CR1, dim=2), R, VectorElement(R, dim=3)])
-        elif self.geometry == "eighthsphere" :
-            element = MixedElement([VectorElement(P2, dim=3), VectorElement(CR1, dim=2), R])
+
+        element = MixedElement([VectorElement(P2, dim=3), VectorElement(CR1, dim=2), R])
 
         self.Q = FunctionSpace(self.mesh, element)
         self.q_, self.q, self.q_t = Function(self.Q), TrialFunction(self.Q), TestFunction(self.Q)
   
-#        self.u_t, self.beta_t, self.lbda_t, self.rigid_t = split(self.q_t)
-        if self.geometry == "Hemisphere":
-            self.u_, self.beta_, self.lbda_ , self.rigid_ = split(self.q_)
-            self.u, self.beta, self.lbda, self.rigid = split(self.q)
-        elif self.geometry == "eighthsphere":
-            self.u_, self.beta_, self.lbda_= split(self.q_)
-            self.u, self.beta, self.lbda = split(self.q)
-
+        self.u_, self.beta_, self.lbda_= split(self.q_)
+        self.u, self.beta, self.lbda = split(self.q)
             
         self.V_phi = self.Q.sub(0).collapse() #FunctionSpace(self.mesh, VectorElement("P", mesh.ufl_cell(), degree = 2, dim = 3))
         self.V_beta = self.Q.sub(1).collapse() #FunctionSpace(self.mesh, VectorElement("P", mesh.ufl_cell(), degree = 2, dim = 2))
@@ -147,7 +140,6 @@ class NonlinearProblem_metric_from_mesh:
         self.a1 = Function(self.VT)
         self.a2 = Function(self.VT)
         self.n0 = Function(self.VT)
-#        self.d0 = Function(self.VT)
         
         self.thickness = Function(self.V_thickness)
         x = Expression(("x[0]", "x[1]", "x[2]"), degree=1)
@@ -161,39 +153,27 @@ class NonlinearProblem_metric_from_mesh:
         boundary_y = lambda x, on_boundary: near(x[1], 0., 1.e-3) and on_boundary
         boundary_z = lambda x, on_boundary: near(x[2], 0., 1.e-3) and on_boundary
         
-        if self.geometry == "Hemisphere":
-            bc_sphere_disp = DirichletBC(self.Q.sub(0).sub(2), Constant(0.), boundary)
-            bc_sphere_rot = DirichletBC(self.Q.sub(1).sub(1), Constant(0.), boundary)
-            
-            self.bcs = [bc_sphere_disp, bc_sphere_rot]
-
-        elif self.geometry == "eighthsphere":
-            bc_sphere_disp_x = DirichletBC(self.Q.sub(0).sub(0), Constant(0.), boundary_x)
-            bc_sphere_disp_y = DirichletBC(self.Q.sub(0).sub(1), Constant(0.), boundary_y)
-            bc_sphere_disp_z = DirichletBC(self.Q.sub(0).sub(2), Constant(0.), boundary_z)
-            
-            bc_sphere_rot_y = DirichletBC(self.Q.sub(1), Constant((0., 0.)), boundary_y)
-            bc_sphere_rot_x = DirichletBC(self.Q.sub(1).sub(1), Constant(0.), boundary_x)
-            bc_sphere_rot_z = DirichletBC(self.Q.sub(1).sub(1), Constant(0.), boundary_z)
-            
-            self.bcs = [bc_sphere_disp_x, bc_sphere_disp_y, bc_sphere_disp_z, bc_sphere_rot_x, bc_sphere_rot_y, bc_sphere_rot_z]
+        bc_sphere_disp_x = DirichletBC(self.Q.sub(0).sub(0), Constant(0.), boundary_x)
+        bc_sphere_disp_y = DirichletBC(self.Q.sub(0).sub(1), Constant(0.), boundary_y)
+        bc_sphere_disp_z = DirichletBC(self.Q.sub(0).sub(2), Constant(0.), boundary_z)
+        
+        bc_sphere_rot_y = DirichletBC(self.Q.sub(1), Constant((0., 0.)), boundary_y)
+        bc_sphere_rot_x = DirichletBC(self.Q.sub(1).sub(1), Constant(0.), boundary_x)
+        bc_sphere_rot_z = DirichletBC(self.Q.sub(1).sub(1), Constant(0.), boundary_z)
+        
+        self.bcs = [bc_sphere_disp_x, bc_sphere_disp_y, bc_sphere_disp_z, bc_sphere_rot_x, bc_sphere_rot_y, bc_sphere_rot_z]
     
         
     def boundary_conditions_n0(self):
-        if self.geometry == "eighthsphere":
-            boundary_x = lambda x, on_boundary: near(x[0], 0., 1.e-3) and on_boundary
-            boundary_y = lambda x, on_boundary: near(x[1], 0., 1.e-3) and on_boundary
-            boundary_z = lambda x, on_boundary: near(x[2], 0., 1.e-3) and on_boundary
-            
-            bc_n0_x = DirichletBC(self.V_normal.sub(0), Constant(0.), boundary_x)
-            bc_n0_y = DirichletBC(self.V_normal.sub(1), Constant(0.), boundary_y)
-            bc_n0_z = DirichletBC(self.V_normal.sub(2), Constant(0.), boundary_z)
-            bcs_n0 = [bc_n0_x, bc_n0_y, bc_n0_z]
+        boundary_x = lambda x, on_boundary: near(x[0], 0., 1.e-3) and on_boundary
+        boundary_y = lambda x, on_boundary: near(x[1], 0., 1.e-3) and on_boundary
+        boundary_z = lambda x, on_boundary: near(x[2], 0., 1.e-3) and on_boundary
         
-        elif self.geometry == "Hemisphere":
-            boundary_z = lambda x, on_boundary: on_boundary
-            bcs_n0 = [DirichletBC(self.V_normal.sub(2), Constant(0.), boundary_z)]
-
+        bc_n0_x = DirichletBC(self.V_normal.sub(0), Constant(0.), boundary_x)
+        bc_n0_y = DirichletBC(self.V_normal.sub(1), Constant(0.), boundary_y)
+        bc_n0_z = DirichletBC(self.V_normal.sub(2), Constant(0.), boundary_z)
+        bcs_n0 = [bc_n0_x, bc_n0_y, bc_n0_z]
+    
         return bcs_n0
         
     def set_solver(self):
@@ -203,11 +183,6 @@ class NonlinearProblem_metric_from_mesh:
         self.solver.parameters['linear_solver'] = "lu"
         self.solver.parameters['absolute_tolerance'] = 1E-6
         self.solver.parameters['relative_tolerance'] = 1E-6
-#        self.solver = NewtonSolver()
-#        self.solver.parameters['maximum_iterations'] = 50
-#        #solver.parameters['linear_solver'] = "mumps"
-#        self.solver.parameters['absolute_tolerance'] = 1E-6
-#        self.solver.parameters['relative_tolerance'] = 1E-6
 
 
     def set_shape(self):
@@ -232,7 +207,6 @@ class NonlinearProblem_metric_from_mesh:
 
     def director(self, beta):
          return as_vector([sin(beta[1])*cos(beta[0]), -sin(beta[0]), cos(beta[1])*cos(beta[0])])
-#         return as_vector([sin(beta[1])*cos(beta[0]), sin(beta[0])*sin(beta[1]), cos(beta[1])]) # Spherical coord
 
 
     def d_director(self, beta, beta_):
@@ -246,11 +220,8 @@ class NonlinearProblem_metric_from_mesh:
         return dot(B0, beta_)
 
 
-
     def set_director(self):
         n = self.n0
-#        self.beta0 = project(as_vector([atan_2(-n[1], sqrt(n[0]**2 + n[2]**2)),
-#                                      atan_2(n[0], n[2])]), VectorFunctionSpace(self.mesh, "P", 1, dim = 2))
 
         self.beta0 = project(as_vector([atan_2(-n[1]-DOLFIN_EPS, sqrt(n[0]**2 + n[2]**2)),
                                         atan_2(n[0] + DOLFIN_EPS, n[2] + DOLFIN_EPS)]), self.V_beta)
@@ -263,7 +234,7 @@ class NonlinearProblem_metric_from_mesh:
     def d2(self, u):
         return u.dx(0)*self.a2[0]+u.dx(1)*self.a2[1]+u.dx(2)*self.a2[2]
     def grad_(self, u):
-        return as_tensor([self.d1(u), self.d2(u)])
+        return as_tensor([self.d1(u), self.d2(u)]) 
 
     def set_fundamental_forms(self):
         self.a0_init = as_tensor([[dot(self.a1, self.a1), dot(self.a1, self.a2)],\
@@ -293,59 +264,28 @@ class NonlinearProblem_metric_from_mesh:
         self.H = 0.5*inner(self.a0_contra, self.b0)
 
     def membrane_deformation(self):
-        if self.hypothesis == "finite strain":
-            return 0.5*(self.F*self.F.T - self.a0)
-        elif self.hypothesis == "small strain":
-#            return 0.5*(self.F0*self.F0.T - self.a0 + self.F0*self.g_u.T + self.g_u*self.F0.T)
-            return 0.5*(self.F0*self.g_u.T + self.g_u*self.F0.T)
+        return 0.5*(self.F0*self.g_u.T + self.g_u*self.F0.T)
 
 
     def bending_deformation(self):
-        if self.hypothesis == "finite strain":
-            return -0.5*(self.F*self.grad_(self.d).T + self.grad_(self.d)*self.F.T) - self.b0
-        elif self.hypothesis == "small strain":
-            dd = self.d_director(self.beta0, self.beta_)
-            return -0.5*(self.g_u*self.grad_(self.d0).T + self.grad_(self.d0)*self.g_u.T +
-                        self.F0*self.grad_(dd).T + self.grad_(dd)*self.F0.T)
-#
-#            return -0.5*(self.F0*self.grad_(self.d0).T + self.grad_(self.d0)*self.F0.T +
-#                         self.g_u*self.grad_(self.d0).T + self.grad_(self.d0)*self.g_u.T +
-#                         self.F0*self.grad_(dd).T + self.grad_(dd)*self.F0.T) - self.b0
+        dd = self.d_director(self.beta0, self.beta_)
+        return -0.5*(self.g_u*self.grad_(self.d0).T + self.grad_(self.d0)*self.g_u.T +
+                    self.F0*self.grad_(dd).T + self.grad_(dd)*self.F0.T)
 
 
     def shear_deformation(self):
-        if self.hypothesis == "finite strain":
-            return self.F*self.d - self.grad_(self.phi0)*self.d0
-        elif self.hypothesis == "small strain":
-            return self.g_u*self.d0 + self.F0*self.d_director(self.beta0, self.beta_)
+        return self.g_u*self.d0 + self.F0*self.d_director(self.beta0, self.beta_)
 
     
     def set_thickness(self, dt):
         D_Delta= inner(self.a0_contra, self.membrane_deformation())
         
-        if self.LE:
-            normal_velocity = Function(self.V_normal)
-            normal_velocity.assign(project(dot(outer(self.n0,self.n0),self.u_), self.V_normal))  # The mesh motion is simply the normal component of the displacement
-
-            bcs = self.boundary_conditions_n0()
-            for bc in bcs:
-                bc.apply(normal_velocity.vector())
-
-            a = inner(self.q_.sub(0, True) - normal_velocity, grad(self.thickness))
-#            print("Shape of grad T: ", grad(self.thickness).ufl_shape)
-            self.thickness.assign(project((self.thickness  + dt*(- a - self.thickness*D_Delta - self.kd*self.thickness + self.vp*(1-self.H*self.thickness))),self.V_thickness))
-        
-        else:
-            self.thickness.assign(project((self.thickness/dt + self.vp)/(1/dt + D_Delta + self.kd + 1.*self.vp*self.H),self.V_thickness))
-#            self.thickness.assign(project((self.thickness/dt +self.vp)/(1/dt + D_Delta+self.kd),self.V_thickness))
-
-   
+        self.thickness.assign(project((self.thickness/dt + self.vp)/(1/dt + D_Delta + self.kd + 1.*self.vp*self.H),self.V_thickness))
    
    
     def set_energies(self):
         # Gaussian signal in the middle of the plate and uniform across one of the directions
-#        sig_q = 0.2;
-#        basal = 1.
+
         self.Q_Expression = Expression(('basal + (zeta - basal)*exp(-0.5*(x[1]*x[1])/(sig_q*sig_q))'), sig_q = self.gaussian_width, basal = self.basal, zeta = self.zeta, degree = 2)
 
             
@@ -370,26 +310,14 @@ class NonlinearProblem_metric_from_mesh:
         Q_alphabeta = as_tensor((self.a0_contra[i,l]*self.a0_contra[j,m]*self.Q_tensor[l,m] - self.a0_contra[i,j]*self.q_33),[i,j])
         
 
-#        self.N = self.thickness*self.mu*as_tensor(A_[i,j,l,m]*self.membrane_deformation()[l,m]
-#        + self.a0_contra[i,j]*(self.kd - self.vp/self.thickness), [i,j])+ \
-#            self.Q_field*self.thickness*as_tensor((self.a0_contra[i,l]*self.a0_contra[j,m]*self.Q_tensor[l,m] - self.a0_contra[i,j]*self.q_33),[i,j])\
-#                +(self.thickness**3/12.0)*self.mu*as_tensor(C_[i,j,l,m]*self.bending_deformation()[l,m],[i,j])
-#
-#        self.M = (self.thickness**3/3.0)*self.mu*as_tensor(A_[i,j,l,m]*self.bending_deformation()[l,m] + B_[i,j,l,m]*self.membrane_deformation()[l,m] + (self.H*self.a0_contra[i,j] - self.b0[i,j])*(self.kd-self.vp/self.thickness),[i,j])\
-#            + (self.thickness**3/12.)*C_active*self.Q_field
         
-        # Un-coupled system
-        if self.polymerization == 1:
-            self.N = 4.0*self.thickness*self.mu*as_tensor(A_[i,j,l,m]*self.membrane_deformation()[l,m]
+       
+        self.N = 4.0*self.thickness*self.mu*as_tensor(A_[i,j,l,m]*self.membrane_deformation()[l,m]
             + 0.5*self.a0_contra[i,j]*(self.kd - self.vp/self.thickness), [i,j]) + \
                 self.Q_field*self.thickness*as_tensor((self.a0_contra[i,l]*self.a0_contra[j,m]*self.Q_tensor[l,m] - self.a0_contra[i,j]*self.q_33),[i,j])
-            self.M = (self.thickness**3/3.0)*self.mu*as_tensor(A_[i,j,l,m]*self.bending_deformation()[l,m],[i,j])
-                 #+ (self.thickness**3/12.)*C_active*self.Q_field
-        else:
-            self.N = 4.0*self.thickness*self.mu*as_tensor(A_[i,j,l,m]*self.membrane_deformation()[l,m], [i,j]) + \
-                self.Q_field*self.thickness*as_tensor((self.a0_contra[i,l]*self.a0_contra[j,m]*self.Q_tensor[l,m] - self.a0_contra[i,j]*self.q_33),[i,j])
-            self.M = (self.thickness**3/3.0)*self.mu*as_tensor(A_[i,j,l,m]*self.bending_deformation()[l,m],[i,j]) #+ (self.thickness**3/12.)*C_active*self.Q_field
-            
+
+        self.M = (self.thickness**3/3.0)*self.mu*as_tensor(A_[i,j,l,m]*self.bending_deformation()[l,m],[i,j])
+                
         self.T = self.thickness*self.mu*as_tensor(self.a0_contra[i,j]*self.shear_deformation()[j], [i])
 
         
@@ -417,33 +345,17 @@ class NonlinearProblem_metric_from_mesh:
 
         # The total elastic energy and its first and second derivatives
         self.Pi = self.psi_m*sqrt(self.j0)*self.dx + self.psi_b*sqrt(self.j0)*self.dx + self.psi_s*sqrt(self.j0)*self.dx
-        if self.geometry == "Hemisphere":
-            self.Pi = self.Pi + dot(self.rigid_,self.u_)*sqrt(self.j0)*self.dx # Remotion of rigid motion
        
-        """ Osmotic shock
-        if self.time > 0.10 and self.time <0.5 :
-            self.Pi = self.Pi + self.lbda_*(dot(self.u_, self.n0) + 0.5)*sqrt(self.j0)*self.dx # Volume conservation
-#        elif self.time >1.5 and self.time < 1.9:
-#            self.Pi = self.Pi + self.lbda_*(dot(self.u_, self.n0) - 0.5)*sqrt(self.j0)*self.dx # Volume conservation
-        else:
-            self.Pi = self.Pi + self.lbda_*dot(self.u_, self.n0)*sqrt(self.j0)*self.dx # Volume conservation """
+        if self.HyperOsmotic == 1:
+            a, b, c, d = 0.2, 5., 4*np.pi/3, -1. #Hypershock
+            self.dV = Expression(('a*b*exp(-b*(d+t))/pow(1.+exp(-b*(d+t)),2)'), t = self.time, a = a, b = b, c = c, d = d, element = self.Q.sub(2).collapse().ufl_element())
+        if self.HypoOsmotic == 1:
+            a, b, c, d = -1., 4., 4*np.pi/3, -2. #Hyposhock
+            self.dV = Expression(('a*b*exp(-b*(d+t))/pow(1.+exp(-b*(d+t)),2)'), t = self.time, a = a, b = b, c = c, d = d, element = self.Q.sub(2).collapse().ufl_element())
        
-       
-       
-#        def ppos(x):
-#            return (x+abs(x))/2.
-#        
-#        k_pen = 5e-2 # ~ 1e-2
-#        d = Constant('1.25')
-#        r = project(norm(self.phi0),self.V_thickness)
-#
-#        ConfinementPenalty = k_pen*(0.5*(abs(r - d) + r - d ) + 0.5*((r-d)/abs(r-d) + 1))*dot(self.phi0/r,self.u_)*sqrt(self.j0)*self.dx
-#        
-#        self.Pi = self.Pi + ConfinementPenalty
-        
-        self.Pi = self.Pi + self.lbda_*dot(self.u_, self.n0)*sqrt(self.j0)*self.dx # Volume conservation
-        
-        
+
+        self.Pi = self.Pi + self.lbda_*(dot(self.u_, self.n0) + self.dV)*sqrt(self.j0)*self.dx
+                
         self.dPi = derivative(self.Pi, self.q_, self.q_t)# + self.lbda_*dot(self.u_t, self.n0)*sqrt(self.j0)*self.dx+ self.lbda_t*dot(self.u_, self.n0)*sqrt(self.j0)*self.dx
         self.J = derivative(self.dPi, self.q_, self.q)
 
@@ -466,22 +378,8 @@ class NonlinearProblem_metric_from_mesh:
         displacement_mesh = Function(self.V_phi)
         displacement_mesh.interpolate(self.q_.sub(0, True))
         displacement_mesh.vector()[:] *= dt
-#        self.phi0.assign(self.phi0 + displacement_mesh) # Lagrangian
 
-        if self.LE:
-            normal_displacement = Function(self.V_phi)
-
-            normal_displacement.assign(project(inner(self.q_.sub(0, True),self.n0)*self.n0,self.V_phi))
-#            normal_displacement.assign(project(dot(displacement_mesh, self.n0)*self.n0, self.V_normal))
-
-            bcs = self.boundary_conditions_n0()
-            for bc in bcs:
-                bc.apply(normal_displacement.vector())
-            normal_displacement.vector()[:] *= dt
-            ALE.move(self.mesh, normal_displacement)
-
-        else:
-            ALE.move(self.mesh, displacement_mesh)
+        ALE.move(self.mesh, displacement_mesh)
         self.initialize()
 
 
@@ -531,23 +429,13 @@ class NonlinearProblem_metric_from_mesh:
         
     def adapt_and_interpolate(self):
 
-#        self.q_ = Function(adapt(self.q_._cpp_object, self.mesh))
-#        self.Q = self.q_.function_space()
-#        self.V_phi = FunctionSpace(adapt(self.V_phi._cpp_object, self.mesh))
-#        self.V_beta = FunctionSpace(adapt(self.V_beta._cpp_object, self.mesh))
-#        self.V_thickness = FunctionSpace(adapt(self.V_thickness._cpp_object, self.mesh))
-#        self.V_alpha = FunctionSpace(adapt(self.V_alpha._cpp_object, self.mesh))
-#        self.VT = FunctionSpace(adapt(self.VT._cpp_object, self.mesh))
-#        self.V_normal = FunctionSpace(adapt(self.V_normal._cpp_object, self.mesh))
 
         P2 = FiniteElement("Lagrange", self.mesh.ufl_cell(), degree = 2)
         P1 = FiniteElement("Lagrange", self.mesh.ufl_cell(), degree = 2)
         CR1 = FiniteElement("CR", self.mesh.ufl_cell(), degree = 1)
         R = FiniteElement("Real", self.mesh.ufl_cell(), degree=0)
-        if self.geometry == "Hemisphere":
-            element = MixedElement([VectorElement(P2, dim=3), VectorElement(CR1, dim=2), R, VectorElement(R, dim=3)])
-        elif self.geometry == "eighthsphere" :
-            element = MixedElement([VectorElement(P2, dim=3), VectorElement(CR1, dim=2), R])
+        
+        element = MixedElement([VectorElement(P2, dim=3), VectorElement(CR1, dim=2), R])
 
         self.Q = FunctionSpace(self.mesh, element)
         self.V_phi = self.Q.sub(0).collapse() #FunctionSpace(self.mesh, VectorElement("P", mesh.ufl_cell(), degree = 2, dim = 3))
@@ -571,10 +459,7 @@ class NonlinearProblem_metric_from_mesh:
 
 
         self.q_t, self.q = TrialFunction(self.Q), TestFunction(self.Q)
-        if self.geometry == "Hemisphere":
-            self.u_, self.beta_, self.lbda_ , self.rigid_ = split(self.q_)
-        elif self.geometry == "eighthsphere":
-            self.u_, self.beta_, self.lbda_  = split(self.q_)
+        self.u_, self.beta_, self.lbda_  = split(self.q_)
 
 
         self.set_local_frame()
