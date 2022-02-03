@@ -9,21 +9,19 @@ def save_data(filename, time, problem):
     # Volume
     
     current_volume = 2*assemble(dot(problem.phi0, problem.n0)*problem.dx(domain=problem.mesh))/pi
-    if problem.geometry == "Hemisphere":
-        current_radius = 0
-    elif problem.geometry == "eighthsphere":
-        # Furrow radius
-        boundary_subdomains = MeshFunction("size_t", problem.mesh, problem.mesh.topology().dim() - 1)
-        boundary_subdomains.set_all(0)
-        boundary_y = lambda x, on_boundary: near(x[1], 0., 1.e-3) and on_boundary
-        AutoSubDomain(boundary_y).mark(boundary_subdomains, 1)
-        dss = ds(subdomain_data=boundary_subdomains)
-        current_radius = assemble((2./pi) * dss(1)(domain = problem.mesh))
-        Furrow_thickness = assemble(problem.thickness*(2./(pi*current_radius)) * dss(1)(domain = problem.mesh))
+    
+    # Furrow radius
+    boundary_subdomains = MeshFunction("size_t", problem.mesh, problem.mesh.topology().dim() - 1)
+    boundary_subdomains.set_all(0)
+    boundary_y = lambda x, on_boundary: near(x[1], 0., 1.e-3) and on_boundary
+    AutoSubDomain(boundary_y).mark(boundary_subdomains, 1)
+    dss = ds(subdomain_data=boundary_subdomains)
+    current_radius = assemble((2./pi) * dss(1)(domain = problem.mesh))
+    Furrow_thickness = assemble(problem.thickness*(2./(pi*current_radius)) * dss(1)(domain = problem.mesh))
 
-        #            furrow_radius = np.append(furrow_radius, current_radius )
-        print("radius of the furrow:", current_radius)
-        print("thickness of the furrow:", Furrow_thickness)
+    #            furrow_radius = np.append(furrow_radius, current_radius )
+    print("radius of the furrow:", current_radius)
+    print("thickness of the furrow:", Furrow_thickness)
 
 
     # Dissipation
