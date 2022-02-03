@@ -26,7 +26,8 @@ parameters["form_compiler"]["quadrature_degree"] = 4
 parameters['allow_extrapolation'] = True # TODO: Bug Workaround?!?
 
 
-
+cwd = os.getcwd()
+print(cwd)
 # Create config object
 C = configreader.Config()
 config = C.read('config.conf')
@@ -49,6 +50,9 @@ polymerization = int(config['simulation']['polymerization'])
 dt_max = dt
 dt_min = 1e-3*dt_max
 remeshing_frequency = float(config['remeshing']['remeshing_frequency']) # remeshing every n time steps
+
+HyperOsmotic = int(config['simulation']['HyperOsmotic'])
+HypoOsmotic = int(config['simulation']['HypoOsmotic'])
 
 # Physical parameteres
 inital_thickness = config['parameters']['thickness']
@@ -91,9 +95,6 @@ initial_volume = assemble(1.*dx(domain=mesh))/3
 print("Initial volume:", initial_volume)
 
 
-LE = False
-
-
 
 
 
@@ -102,8 +103,7 @@ current_radius = 1.
 #print("cytokinesis-zeta_{}-kd_{}-vp_{}".format(zeta, kd, vp))
 filename = output_dir + xdmf_name.replace(".xdmf", "_results.xdmf")
 problem = NonlinearProblem_metric_from_mesh(mesh, mmesh, thick = thick, mu = mu, basal = basal, zeta = zeta,
-                                            gaussian_width = gaussian_width,kd = kd, vp = vp, dt = dt, vol_ini = initial_volume,
-                                            fname = filename, hypothesis="small strain", geometry = geometry, LE = LE, polymerization = polymerization)
+                                            gaussian_width = gaussian_width,kd = kd, vp = vp, dt = dt, vol_ini = initial_volume, HyperOsmotic = HyperOsmotic, HypoOsmotic = HypoOsmotic, fname = filename)
 
 #filename = 'output/data.csv'
 
@@ -117,54 +117,38 @@ i = 0
 radius_old = 1.
 d_radius = 1
 while time < Time:
+    i += 1
+    print("Iteration {}. Time step : {}".format(i, dt))
+    # problem.evolution(dt/2)
+    niter, _ = problem.solve()
 
-    if dt < dt_min or current_radius < 0.06:# or d_radius < 2.e-6: # If the furrow radius is smaller than twice the thickness it means that it should have stopped dividing!
+    problem.evolution(dt)
+    current_radius = radius(problem)
+    d_radius = abs(current_radius-radius_old)
+    print("Variation in radius: {}".format(d_radius))
+    radius_old = current_radius
+    
+    problem.write(time + dt, u = True, beta = True, phi = True, frame = True, epaisseur = True, activity = True, energies = True)
+    print("rmin={}, rmax={}, hmin={}, hmax={}".format(
+        problem.mesh.rmin(), problem.mesh.rmax(), problem.mesh.hmin(), problem.mesh.hmax()))
+
+    save_data(f, time, problem)
+    time +=dt
+        
+    if i % remeshing_frequency == 0:
+        if problem.mesh.rmin() < 1.5e-3:
+            problem.mesh_refinement("hsiz")
+            print("Uniform mesh!")
+        else:
+            problem.mesh_refinement("hausd")
+            print("Hausdorff distance")
+
+    if current_radius < 0.06:# If the furrow radius is smaller than twice the thickness it means that it should have stopped dividing!
         problem.write(time+dt, u = True, beta = True, phi = True, frame = True, epaisseur = True, activity = True, energies = False)
         break
-        # raise ValueError("Reached minimal time step")
-    try:
-        i += 1
-        print("Iteration {}. Time step : {}".format(i, dt))
-        # problem.evolution(dt/2)
-        niter, _ = problem.solve()
-        converged = True
-    except:
-        # problem.evolution(-dt/2)
-        dt /= 2
-        converged = False
-    else:   # execute if no convergence issues
-        problem.evolution(dt)
-        current_radius = radius(problem)
-        d_radius = abs(current_radius-radius_old)
-        print("Variation in radius: {}".format(d_radius))
-        radius_old = current_radius
-        if i % 2 == 0:
-            problem.write(time + dt, u = True, beta = True, phi = True, frame = True, epaisseur = True, activity = True, energies = True)
-        
-            print("rmin={}, rmax={}, hmin={}, hmax={}".format(
-                problem.mesh.rmin(), problem.mesh.rmax(), problem.mesh.hmin(), problem.mesh.hmax()))
-
-        save_data(f, time, problem)
-        time +=dt
 
 
-        # adaptive time step
-        if niter < 5:
-            dt = min(1.25*dt, dt_max)
-        elif niter > 8:
-            dt *= 0.75
-            
-    try:    # always test for mesh refinement (every so time step or when failure)
-        if i % remeshing_frequency == 0 or not(converged):
-            if problem.mesh.rmin() < 1.5e-3:
-                problem.mesh_refinement("hsiz")
-                print("Uniform mesh!")
-            else:
-                problem.mesh_refinement("hausd")
-                print("Hausdorff distance")
-    except:
-        break
-        
+
 f.close()
 
 
