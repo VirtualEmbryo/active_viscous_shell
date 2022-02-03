@@ -1,8 +1,5 @@
-
-- The config.conf file specifying the parameters should be placed in data/run???? 
-
-- Inside data/run??? : conda activate fenicsproject 
-
+- The config.conf file specifying the parameters and each examples are in the folder Examples
+- Inside Examples/(Cytokinesis or HyperOsmoticShock or HipoOsmoticShock) : conda activate fenicsproject 
 - To run: python3 ../../main.py 
 
 
