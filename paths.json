@@ -1,0 +1,4 @@
+{
+    "gmsh": "gmsh",
+    "mmg": "/opt/mmg/bin/mmgs_O3"
+}
