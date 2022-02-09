@@ -1,6 +1,0 @@
-- The config.conf file specifying the parameters and each examples are in the folder Examples
-- Inside Examples/(Cytokinesis or HyperOsmoticShock or HipoOsmoticShock) : conda activate fenicsproject 
-- To run: python3 ../../main.py 
-
-
-Notes: One should pay attention to the remeshing. The mmg files are different for MAC or LINUX systems.
