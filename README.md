@@ -16,9 +16,9 @@ See the [Theory and implementation](theory_implementation.md) document.
 
 * **`FEniCS`** (>= 2019.1.0, Python 3), see [installation instructions here](https://fenicsproject.org/download/archive/).
 * **`Gmsh`**, see [Download here](http://gmsh.info/download).
-* the **`meshio`** package for mesh conversion
+* the **`meshio`** package for mesh conversion (version 5.0 at least)
 > ```
-> pip install meshio
+> pip install meshio>=5.0
 > ```
 
 * the **`mmgs`** application of the MMG library, [Download here](http://www.mmgtools.org/mmg-remesher-downloads).
