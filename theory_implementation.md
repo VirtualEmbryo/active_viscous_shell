@@ -152,6 +152,7 @@ The `evolution` method then advances in time by:
 * updating the mesh position with the mesh displacement $\bm{U}\Delta t $ (using FEniCS `ALE.move` method)
 
 Finally, during the time stepping loop, mesh refinement is performed every `remeshing_frequency` time steps.
+
 ## References
 
 Hale, J. S., Brunetti, M., Bordas, S. P., & Maurini, C. (2018). Simple and extensible plate and shell finite element models through automatic code generation tools. Computers & Structures, 209, 163-181.
