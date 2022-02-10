@@ -54,14 +54,11 @@ time = 0
 Time = float(config["simulation"]["Time_max"])
 dt = float(config["simulation"]["timestep"])
 polymerization = int(config["simulation"]["polymerization"])
-dt_max = dt
-dt_min = 1e-3 * dt_max
+
 remeshing_frequency = float(
     config["remeshing"]["remeshing_frequency"]
 )  # remeshing every n time steps
 
-HyperOsmotic = int(config["simulation"]["HyperOsmotic"])
-HypoOsmotic = int(config["simulation"]["HypoOsmotic"])
 
 # Physical parameteres
 inital_thickness = config["parameters"]["thickness"]
@@ -72,11 +69,12 @@ basal = float(config["parameters"]["contractility_basal"])
 gaussian_width = float(config["parameters"]["contractility_width"])
 kd = float(config["parameters"]["depolymerization"])
 vp = float(config["parameters"]["polymerization"])
-q_11, q_12, q_22 = 1.0 / 6, 0.0, 1.0 / 6
+
 Q_tensor = as_tensor([[1.0 / 6, 0.0], [0.0, 1.0 / 6]])
 q_33 = -1.0 / 3
 
-mesh_path = "/mesh/"
+# Volume variation
+dV = config["parameters"].get("volume_variation", "0")
 
 subprocess.call(
     [
@@ -84,11 +82,13 @@ subprocess.call(
         "-2",
         "-format",
         "msh2",
+        "-v",
+        "1",
         "../../" + geometry + ".geo",
         "-o",
         xdmf_name.replace("xdmf", "msh"),
     ]
-)  # Hudson's
+)
 msh = meshio.read(xdmf_name.replace(".xdmf", ".msh"))
 meshio.write(
     xdmf_name,
@@ -118,9 +118,9 @@ print("Initial volume:", initial_volume)
 
 current_radius = 1.0
 
-# print("cytokinesis-zeta_{}-kd_{}-vp_{}".format(zeta, kd, vp))
+
 filename = output_dir + xdmf_name.replace(".xdmf", "_results.xdmf")
-problem = NonlinearProblem_metric_from_mesh(
+problem = ActiveShell(
     mesh,
     mmesh,
     thick=thick,
@@ -130,15 +130,14 @@ problem = NonlinearProblem_metric_from_mesh(
     gaussian_width=gaussian_width,
     kd=kd,
     vp=vp,
+    Q_tensor=Q_tensor,
+    q_33=q_33,
     dt=dt,
     vol_ini=initial_volume,
     paths=paths,
-    HyperOsmotic=HyperOsmotic,
-    HypoOsmotic=HypoOsmotic,
+    dV=dV,
     fname=filename,
 )
-
-# filename = 'output/data.csv'
 
 hdr = "time, current_volume , current_radius, membrane_total_dissipation, membrane_passive_dissipation, membrane_active_dissipation, membrane_polymerization_dissipation, bending_total_dissipation, bending_passive_dissipation, bending_active_dissipation, bending_polymerization, dissipation_shear, furrow_thickness"
 
@@ -161,7 +160,9 @@ d_radius = 1
 while time < Time:
     i += 1
     print("Iteration {}. Time step : {}".format(i, dt))
-    # problem.evolution(dt/2)
+
+    problem.initialize()
+
     niter, _ = problem.solve()
 
     problem.evolution(dt)
@@ -217,12 +218,5 @@ while time < Time:
 
 
 f.close()
-
-
-# r=open('output/final_radius.csv','w')
-#
-# np.savetxt(r, np.column_stack((zeta,radius(problem))),delimiter=',')
-# r.close()
-
 
 print("It ended at iteration {}, and Time {}".format(i, time))

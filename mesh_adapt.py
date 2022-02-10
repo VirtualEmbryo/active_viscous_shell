@@ -13,16 +13,20 @@ def mesh_adapt(mmg_path, gmsh_path, control_type):
     # call mmgs with mesh optimization and Hausdorff distance
     if control_type == "hausd":
         os.system(
-            mmg_path + " -in mesh.mesh -out mesh_optimized.mesh -hausd {}".format(dist)
+            mmg_path
+            + " -in mesh.mesh -v 0 -out mesh_optimized.mesh -hausd {}".format(dist)
         )
     #             os.system('/opt/mmg/bin/mmgs_O3 -in mesh.mesh -out mesh_optimized.mesh -hausd {} -optim'.format(dist)) # Jeremy's
     elif control_type == "hsiz":
         dist = 0.02
         os.system(
-            mmg_path + " -in mesh.mesh -out mesh_optimized.mesh -hsiz {}".format(dist)
+            mmg_path
+            + " -in mesh.mesh -v 0 -out mesh_optimized.mesh -hsiz {}".format(dist)
         )
     # Convert back to .msh format using Gmsh
-    os.system(gmsh_path + " mesh_optimized.mesh -3 -format msh2 -o mesh_optimized.msh")
+    os.system(
+        gmsh_path + " mesh_optimized.mesh -3 -format msh2 -v 1 -o mesh_optimized.msh"
+    )
 
     fname = "mesh.xdmf"
     fname_out = "mesh_optimized.xdmf"

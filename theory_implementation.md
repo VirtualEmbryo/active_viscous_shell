@@ -74,6 +74,8 @@ In the present work, we do not follow the MITC discretization discussed in to re
 
 Such a discretization choice is extremely simple and seems free of any shear locking effects as shown in [[Campello et al., 2003]](#References) for nonlinear shells and [[Bleyer, 2021]](#References) in the case of plate and shell limit analysis theory. 
 
+The thickness field $T$ is discretized using a continuous linear ($P^1$-Lagrange) interpolation. The corresponding definitions are implemented in the `set_functions_space` method of the `ActiveShell` class.
+
 ## System evolution
 
 When considering the system evolution between time $t_n$ and $t_{n+1}$, the resulting linear system for the current velocity and rate of change of director field is solved when considering the shell thickness to be fixed to its previous value i.e. $T=T_n$
@@ -82,66 +84,74 @@ $$
 $$
 where
 $$
- \mathcal{R}( \boldsymbol{U},\dot{\boldsymbol{\beta}};T_{n}) = \int_S \phi(\boldsymbol{U},\dot{\boldsymbol{\beta}};T_{n}) \,\dd A 
+ \mathcal{R}( \boldsymbol{U},\dot{\boldsymbol{\beta}};T_{n}) = \int_S \phi(\boldsymbol{U},\dot{\boldsymbol{\beta}};T_{n}) \,\text{d} A 
 $$
 is the system total Rayleighian. 
 
 Here, we assume no external loading of the shell, such that all shell deformations are powered by internally generated active stress. Note that, due to the linear expressions of the strain rates and the quadratic form of the dissipation potential $\phi$, the resulting system is in fact linear. 
 
-We then update the geometry in an asynchronous and Lagrangian manner, by solving the discretized thickness evolution equation and updating the midsurface position and the director using \eqref{eq:director-parametrization} as follows:
-% \begin{subequations}
-%     \begin{equation}
-%     \label{eq:thickness_discrete}
-%         \frac{T_{n+1}-T_n}{\Delta t}=-T_{n+1} a^{\alpha\beta}\Delta_{\alpha\beta,n+1}-T_{n+1} k_d + v_p (1-H_n T_{n+1} )
-%     \end{equation}
-%     \begin{equation}
-%     \label{eq:director-update}
-%         \boldsymbol{d}_{n+1} = \boldsymbol{d}(\bm{\beta}_n + \Delta t \dot{\bm{\beta}}_{n+1})
-%     \end{equation}
-%     \begin{equation}
-%     \label{eq:geometry-update}
-%         \boldsymbol{x}_{n+1} = \boldsymbol{x}_{n} + \Delta t\,\boldsymbol{U}_{n+1}
-%     \end{equation}
-% \end{subequations}
+## Updating the geometry
+We then update the geometry in an asynchronous and Lagrangian manner, by solving the discretized thickness evolution equation first, then updating the midsurface position and the director using as follows:
 
 
-\begin{subequations}
-\begin{align}
-        &\frac{T_{n+1}-T_n}{\Delta t}=-T_{n+1} a^{\alpha\beta}\Delta_{\alpha\beta,n+1}-T_{n+1} k_d + v_p (1-H_n T_{n+1} )\label{eq:thickness_discrete}
-    \\
-    &\boldsymbol{d}_{n+1} = \boldsymbol{d}(\bm{\beta}_n + \Delta t \dot{\bm{\beta}}_{n+1})\label{eq:director-update}
-    \\
-    &\boldsymbol{x}_{n+1} = \boldsymbol{x}_{n} + \Delta t\,\boldsymbol{U}_{n+1} \label{eq:geometry-update}
-\end{align}
-\end{subequations}
 
-    The full finite-element implementation is done within the FEniCS software package \cite{logg2012automated, alnaes2015fenics} and the meshes are produced with the Gmsh generator \cite{geuzaine2009gmsh}. In the geometry updating process, we also regularly call some remeshing procedure using the MMG platform \cite{dapogny2014three}. The Python code used for implementation in FEniCS, as well as the two following numerical illustrations may be found here \cite{githubFENICS}. Considering the symmetry of the numerical examples presented in Sec.~\ref{sec:numericalillustration}, the finite element model of the cell is modelled as one-eighth of a sphere. 
+$$
+\frac{T_{n+1}-T_n}{\Delta t}=-T_{n+1} a^{\alpha\beta}\Delta_{\alpha\beta,n+1}-T_{n+1} k_d + v_p (1-H_n T_{n+1} )
+$$
+$$\boldsymbol{d}_{n+1} = \boldsymbol{d}(\bm{\beta}_n + \Delta t \dot{\bm{\beta}}_{n+1})
+$$
+$$
+\boldsymbol{x}_{n+1} = \boldsymbol{x}_{n} + \Delta t\,\boldsymbol{U}_{n+1}=
+$$
 
-\subsection{Volume constraint}\label{sec:VolumeConservation}
+## Volume constraint
 
-In some numerical illustrations, such as cell division, Sec.~\ref{sec:cytokinesis}, we want to ensure that the total volume $V$ of the cell is conserved during the division. To do so, we enforce the following constraint,
-\begin{equation}
-\frac{d V}{d t} = \int_{\mathcal{S}} \vec{U} \cdot \vec{n}\, \dd A = 0.
-\end{equation}
+In some numerical illustrations, such as cell division, we want to ensure that the total volume $V$ of the cell is conserved during the division. To do so, we enforce the following constraint,
+$$
+\frac{d V}{d t} = \int_{\mathcal{S}} \bm{U} \cdot \bm{n}\, \text{d} A = 0.
+$$
 Enforcement of this constraint is achieved through the introduction of a Lagrange-multiplier which can be interpreted as the cell hydrostatic pressure $P$  forming the system Lagrangian,
-\begin{equation}
-    \mathcal{L}(\boldsymbol{U},\dot{\boldsymbol{\beta}},P;T_{n}) = \mathcal{R}(\boldsymbol{U},\dot{\boldsymbol{\beta}};T_{n}) +  P\int_{\mathcal{S}} \vec{U} \cdot \vec{n}\, \dd A
-\end{equation}
-turning the minimization problem \eqref{eq:discr-Rayleighian} into a saddle-point problem
-\begin{equation}\label{eq:discr-Lagrangian}
+$$
+    \mathcal{L}(\boldsymbol{U},\dot{\boldsymbol{\beta}},P;T_{n}) = \mathcal{R}(\boldsymbol{U},\dot{\boldsymbol{\beta}};T_{n}) +  P\int_{\mathcal{S}} \vec{U} \cdot \vec{n}\, \text{d} A
+$$
+turning the minimization problem into a saddle-point problem
+$$
 \boldsymbol{U}_{n+1},\dot{\boldsymbol{\beta}}_{n+1},P_{n+1} = \argmax_P \argmin_{\boldsymbol{U},\dot{\boldsymbol{\beta}}} \mathcal{L}( \boldsymbol{U},\dot{\boldsymbol{\beta}},P;T_{n}).
-\end{equation}
+$$
+
+In the FEniCS implementation, we use a `"Real"` function space to add this additional single scalar unknown $P$ to the system degrees of freedom.
 
 Note that the previous approach can also be easily extended to the case where the volume change rate is imposed to a given constant $\dot{V}_\text{imp}$
-\begin{equation}
-\frac{d V}{d t} = \int_{\mathcal{S}} \vec{U} \cdot \vec{n}\, \dd A = \dot{V}_\text{imp}
-\end{equation}
+$$
+\frac{d V}{d t} = \int_{\mathcal{S}} \bm{U} \cdot \bm{n}\, \text{d} A = \dot{V}_\text{imp}
+$$
 by considering this new Lagrangian instead:
-\begin{equation}
-    \label{eq:Lagrangian-volume-change}
-    \mathcal{L}(\boldsymbol{U},\dot{\boldsymbol{\beta}},P;T_{n}) = \mathcal{R}(\boldsymbol{U},\dot{\boldsymbol{\beta}};T_{n}) +  P\left(\int_{\mathcal{S}} \vec{U} \cdot \vec{n}\, \dd A - \dot{V}_\text{imp}\right).
-\end{equation}
+$$
+\mathcal{L}(\boldsymbol{U},\dot{\boldsymbol{\beta}},P;T_{n}) = \mathcal{R}(\boldsymbol{U},\dot{\boldsymbol{\beta}};T_{n}) +  P\left(\int_{\mathcal{S}} \vec{U} \cdot \vec{n}\, \text{d} A - \dot{V}_\text{imp}\right).
+$$
 
+## General steps of the implementation
+
+We give here the main aspects of the implementation of the `ActiveShell` class.
+
+At the beginning of each time step, the `initialize` method is called which fulfills different purposes by calling various methods:
+
+* `set_shape` : defines the current position $\phi_0$ based on the mesh coordinates at the beginning of the time step
+* `set_local_frame` : computes the local basis vectors $\bm{a}_1,\bm{a}_2,\bm{n}$ of the shell surface. Note that boundary conditions can be apply on the boundary to enforce the normal to lying in some specific symmetry plane (`boundary_conditions_n0` method)
+* `boundary_conditions` : defines boundary conditions for the velocity and director fields
+* `set_director` : computes the initial director angles $\bm{\beta}_0$ based on the initial normal, the initial director is initialized to the initial normal.
+* `set_kinematics_and_fundamental_forms` : defines the current fundamental forms $\bm{a}_0$, $\bm{b}_0$, curvature $H$
+* `set_kinematics` : defines the new unknown director $\bm{d}$ from $\bm{d}_0$ and the unknown angle rates $\dot{\bm{\beta}}$
+* `set_energies` : defines the various constitutive relationships of the active viscous shell model and the corresponding dissipation potentials
+* `set_total_energy` : aggregates all contributions into the global system lagragian, including volume constraints. Automatic differentiation is used to obtain the corresponding system jacobian
+  
+The `solve` method then solves the corresponding system for the new velocity and director angles rate.
+
+The `evolution` method then advances in time by:
+* solving the thickness evolution equation (`set_thickness` method)
+* updating the mesh position with the mesh displacement $\bm{U}\Delta t $ (using FEniCS `ALE.move` method)
+
+Finally, during the time stepping loop, mesh refinement is performed every `remeshing_frequency` time steps.
 ## References
 
 Hale, J. S., Brunetti, M., Bordas, S. P., & Maurini, C. (2018). Simple and extensible plate and shell finite element models through automatic code generation tools. Computers & Structures, 209, 163-181.

@@ -1,8 +1,23 @@
-import os, sys
-import numpy as np
-from dolfin import *
-from ufl import Index, unit_vector, shape, Jacobian, JacobianDeterminant, atan_2, Max
-import subprocess
+from dolfin import (
+    Constant,
+    NonlinearProblem,
+    assemble_system,
+    XDMFFile,
+    project,
+    FiniteElement,
+    MixedElement,
+    VectorElement,
+    Function,
+    FunctionSpace,
+    VectorFunctionSpace,
+    TestFunction,
+    TrialFunction,
+    Expression,
+    DirichletBC,
+    near,
+    split,
+)
+from ufl import Index, Jacobian, JacobianDeterminant, atan_2
 import meshio
 from mesh_adapt import mesh_adapt
 
@@ -27,7 +42,7 @@ class CustomNonlinearProblem(NonlinearProblem):
         pass
 
 
-class NonlinearProblem_metric_from_mesh:
+class ActiveShell:
     def __init__(
         self,
         mesh,
@@ -39,11 +54,12 @@ class NonlinearProblem_metric_from_mesh:
         gaussian_width,
         kd,
         vp,
+        Q_tensor,
+        q_33,
         vol_ini,
         dt,
-        HyperOsmotic,
-        HypoOsmotic,
         paths,
+        dV,
         time=0,
         fname=None,
     ):
@@ -56,16 +72,16 @@ class NonlinearProblem_metric_from_mesh:
         self.gaussian_width = gaussian_width
         self.kd = kd
         self.vp = vp
+        self.Q_tensor = Q_tensor
+        self.q_33 = q_33
         self.vol_ini = vol_ini
         self.time = time
         self.dt = dt
         self.set_solver()
         self.set_functions_space()
         self.thickness.interpolate(thick)
-        self.dV = 0
+        self.dV_expr = dV
         self.paths = paths
-        self.HyperOsmotic = HyperOsmotic
-        self.HypoOsmotic = HypoOsmotic
 
         self.initialize()
         self.fname = fname
@@ -109,9 +125,9 @@ class NonlinearProblem_metric_from_mesh:
             director.rename("director", "director")
             self.output_file.write(director, i)
 
-            # mean_curvature = project(self.H, self.V_thickness)
-            # mean_curvature.rename("Meancurvature", "Meancurvature")
-            # self.output_file.write(mean_curvature, i)
+            mean_curvature = project(self.H, self.V_thickness)
+            mean_curvature.rename("Meancurvature", "Meancurvature")
+            self.output_file.write(mean_curvature, i)
 
         if epaisseur:
             self.thickness.rename("thickness", "thickness")
@@ -230,11 +246,11 @@ class NonlinearProblem_metric_from_mesh:
         self.solver.parameters["linear_solver"] = "lu"
         self.solver.parameters["absolute_tolerance"] = 1e-6
         self.solver.parameters["relative_tolerance"] = 1e-6
+        self.solver.parameters["report"] = False
 
     def set_shape(self):
-        x = SpatialCoordinate(self.mesh)
-        initial_shape = x
-        self.phi0 = project(initial_shape, self.V_phi)
+        initial_shape = Expression(("x[0]", "x[1]", "x[2]"), degree=1)
+        self.phi0 = interpolate(initial_shape, self.V_phi)
 
     def set_local_frame(self):
         a1, a2, n = local_frame(self.mesh, self.n0)
@@ -315,35 +331,6 @@ class NonlinearProblem_metric_from_mesh:
         return as_tensor([self.d1(u), self.d2(u)])
 
     def set_fundamental_forms(self):
-        self.a0_init = as_tensor(
-            [
-                [dot(self.a1, self.a1), dot(self.a1, self.a2)],
-                [dot(self.a2, self.a1), dot(self.a2, self.a2)],
-            ]
-        )
-
-        self.b0_init = -sym(
-            as_tensor(
-                [
-                    [
-                        inner(as_vector(self.grad_(self.d0)[0, :]), self.a1),
-                        inner(as_vector(self.grad_(self.d0)[0, :]), self.a2),
-                    ],
-                    [
-                        inner(as_vector(self.grad_(self.d0)[1, :]), self.a1),
-                        inner(as_vector(self.grad_(self.d0)[1, :]), self.a2),
-                    ],
-                ]
-            )
-        )
-
-    def set_kinematics_and_fundamental_forms(self):
-        self.F = self.grad_(self.u_) + self.grad_(self.phi0)
-        self.F0 = self.grad_(self.phi0)
-        self.g_u = self.grad_(self.u_)
-
-        self.d = self.director(self.beta_ * self.dt + self.beta0)
-
         self.a0 = as_tensor(
             [
                 [dot(self.a1, self.a1), dot(self.a1, self.a2)],
@@ -370,6 +357,12 @@ class NonlinearProblem_metric_from_mesh:
 
         self.a0_contra = inv(self.a0)
         self.H = 0.5 * inner(self.a0_contra, self.b0)
+
+    def set_kinematics(self):
+        self.F0 = self.grad_(self.phi0)
+        self.g_u = self.grad_(self.u_)
+
+        self.d = self.director(self.beta_ * self.dt + self.beta0)
 
     def membrane_deformation(self):
         return 0.5 * (self.F0 * self.g_u.T + self.g_u * self.F0.T)
@@ -517,36 +510,14 @@ class NonlinearProblem_metric_from_mesh:
         self.psi_b = inner(self.M, self.bending_deformation())
         self.psi_s = SHEAR_PENALTY * inner(self.T_shear, self.shear_deformation())
 
-    def total_energy(self):
+    def set_total_energy(self):
         # Total Energy densities
         self.dx = Measure("dx", domain=self.mesh)
 
         # The total elastic energy and its first and second derivatives
         self.Pi = (self.psi_m + self.psi_b + self.psi_s) * sqrt(self.j0) * self.dx
 
-        if self.HyperOsmotic == 1:
-            a, b, c, d = 0.2, 5.0, 4 * np.pi / 3, -1.0  # Hypershock
-            self.dV = Expression(
-                ("a*b*exp(-b*(d+t))/pow(1.+exp(-b*(d+t)),2)"),
-                t=self.time,
-                a=a,
-                b=b,
-                c=c,
-                d=d,
-                element=self.Q.sub(2).collapse().ufl_element(),
-            )
-        if self.HypoOsmotic == 1:
-            a, b, c, d = -1.0, 4.0, 4 * np.pi / 3, -2.0  # Hyposhock
-            self.dV = Expression(
-                ("a*b*exp(-b*(d+t))/pow(1.+exp(-b*(d+t)),2)"),
-                t=self.time,
-                a=a,
-                b=b,
-                c=c,
-                d=d,
-                element=self.Q.sub(2).collapse().ufl_element(),
-            )
-
+        self.dV = Expression(self.dV_expr, t=self.time, degree=0)
         self.Pi = (
             self.Pi
             + self.lbda_ * (dot(self.u_, self.n0) + self.dV) * sqrt(self.j0) * self.dx
@@ -561,9 +532,9 @@ class NonlinearProblem_metric_from_mesh:
         self.set_boundary_conditions()
         self.set_director()
         self.set_fundamental_forms()
-        self.set_kinematics_and_fundamental_forms()
+        self.set_kinematics()
         self.set_energies()
-        self.total_energy()
+        self.set_total_energy()
 
     def evolution(self, dt):
         self.time += dt
@@ -577,9 +548,10 @@ class NonlinearProblem_metric_from_mesh:
         # Update mesh position with current displacement
         ALE.move(self.mesh, displacement_mesh)
         # Reinitialize quantities on new mesh
-        self.initialize()
+        # self.initialize()
 
     def solve(self):
+        self.set_solver()
         problem = CustomNonlinearProblem(self.dPi, self.J, self.bcs)
         return self.solver.solve(problem, self.q_.vector())
 
@@ -629,14 +601,6 @@ class NonlinearProblem_metric_from_mesh:
 
         self.q_t, self.q = TrialFunction(self.Q), TestFunction(self.Q)
         self.u_, self.beta_, self.lbda_ = split(self.q_)
-
-        self.set_local_frame()
-        self.set_boundary_conditions()
-        self.set_director()
-        self.set_kinematics_and_fundamental_forms()
-        self.set_energies()
-        self.total_energy()
-        self.set_solver()
 
 
 def local_frame(mesh, normal=None):
