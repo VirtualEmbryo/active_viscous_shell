@@ -18,7 +18,7 @@ See the [Theory and implementation](theory_implementation.md) document.
 * **`Gmsh`**, see [Download here](http://gmsh.info/download).
 * the **`meshio`** package for mesh conversion (version 5.0 at least)
 > ```
-> pip install meshio>=5.0
+> pip install meshio==5.*
 > ```
 
 * the **`mmgs`** application of the MMG library, [Download here](http://www.mmgtools.org/mmg-remesher-downloads).
