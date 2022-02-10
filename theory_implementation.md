@@ -119,7 +119,7 @@ $$
 $$
 Enforcement of this constraint is achieved through the introduction of a Lagrange-multiplier which can be interpreted as the cell hydrostatic pressure $P$  forming the system Lagrangian,
 $$
-    \mathcal{L}(\boldsymbol{U},\dot{\boldsymbol{\beta}},P;T_{n}) = \mathcal{R}(\boldsymbol{U},\dot{\boldsymbol{\beta}};T_{n}) +  P\int_{\mathcal{S}} \vec{U} \cdot \vec{n}\, \text{d} A
+    \mathcal{L}(\boldsymbol{U},\dot{\boldsymbol{\beta}},P;T_{n}) = \mathcal{R}(\boldsymbol{U},\dot{\boldsymbol{\beta}};T_{n}) +  P\int_{\mathcal{S}} \bm{U} \cdot \bm{n}\, \text{d} A
 $$
 turning the minimization problem into a saddle-point problem
 $$
@@ -134,7 +134,7 @@ $$
 $$
 by considering this new Lagrangian instead:
 $$
-\mathcal{L}(\boldsymbol{U},\dot{\boldsymbol{\beta}},P;T_{n}) = \mathcal{R}(\boldsymbol{U},\dot{\boldsymbol{\beta}};T_{n}) +  P\left(\int_{\mathcal{S}} \vec{U} \cdot \vec{n}\, \text{d} A - \dot{V}_\text{imp}\right).
+\mathcal{L}(\boldsymbol{U},\dot{\boldsymbol{\beta}},P;T_{n}) = \mathcal{R}(\boldsymbol{U},\dot{\boldsymbol{\beta}};T_{n}) +  P\left(\int_{\mathcal{S}} \bm{U} \cdot \bm{n}\, \text{d} A - \dot{V}_\text{imp}\right).
 $$
 
 ## General steps of the implementation
