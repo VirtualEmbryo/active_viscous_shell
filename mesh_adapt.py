@@ -28,7 +28,6 @@ def mesh_adapt(mmg_path, gmsh_path, control_type):
         gmsh_path + " mesh_optimized.mesh -3 -format msh2 -v 1 -o mesh_optimized.msh"
     )
 
-    fname = "mesh.xdmf"
     fname_out = "mesh_optimized.xdmf"
 
     # read back with meshio to remove cells and cell data and convert to xdmf

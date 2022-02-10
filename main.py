@@ -1,24 +1,20 @@
-import os, sys
-
-# sys.path.append('../')
-#
-##cwd = os.getcwd()
-#
-# my_absolute_dirpath = os.path.abspath(os.path.dirname(__file__))
-#
-# module_path = os.path.abspath(os.path.join('../'))
-#
-# if module_path not in sys.path :
-#    sys.path.append(module_path)
-
+import os
 import numpy as np
-
-# import matplotlib.pyplot as plt
-
-from dolfin import *
-from ufl import Index, unit_vector, shape, Jacobian, JacobianDeterminant, atan_2, Max
-from save_data import *
-from ActiveShell import *
+from dolfin import (
+    parameters,
+    XDMFFile,
+    Expression,
+    Mesh,
+    MeshFunction,
+    near,
+    AutoSubDomain,
+    ds,
+    assemble,
+    dx,
+)
+from ufl import as_tensor, pi
+from save_data import save_data
+from active_shell import ActiveShell
 import subprocess
 import meshio
 import configreader

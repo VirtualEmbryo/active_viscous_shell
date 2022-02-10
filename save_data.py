@@ -1,9 +1,6 @@
-import os, sys
 import numpy as np
-from dolfin import *
-from ufl import Index, unit_vector, shape, Jacobian, JacobianDeterminant, atan_2, Max
-import subprocess
-import meshio
+from dolfin import assemble, MeshFunction, AutoSubDomain, near, ds, Function
+from ufl import dot, pi
 
 
 def save_data(filename, time, problem):
