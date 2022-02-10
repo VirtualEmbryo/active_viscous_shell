@@ -1,5 +1,12 @@
+---
+header-includes:
+  - \usepackage{bm}
+  - \usepackage{amsmath}
+  - \DeclareMathOperator*{\argmin}{arg\,min}
+  - \DeclareMathOperator*{\argmax}{arg\,max}
+---
 # Theory and implementation
-$\newcommand{\dd}[1]{ \,\textrm d{#1}} $
+
 The resolution of the viscous flow on the curved shell will be done in an updated Lagrangian manner. At each time step, we consider the current geometrical state of the shell as the reference surface. After computing the shell velocity, we update the geometry accordingly and consider this new geometry as the reference surface for the next time step.
 
 As discussed in the paper, Naghdi-type shell theories (shearable models) are easier to implement that Koiter-type theories. Shearing energy will be here artificially penalized in order to approximate the thin shell model derived in the paper.
@@ -149,7 +156,7 @@ The `solve` method then solves the corresponding system for the new velocity and
 
 The `evolution` method then advances in time by:
 * solving the thickness evolution equation (`set_thickness` method)
-* updating the mesh position with the mesh displacement $\bm{U}\Delta t $ (using FEniCS `ALE.move` method)
+* updating the mesh position with the mesh displacement $\bm{U}\Delta t$ (using FEniCS `ALE.move` method)
 
 Finally, during the time stepping loop, mesh refinement is performed every `remeshing_frequency` time steps.
 
