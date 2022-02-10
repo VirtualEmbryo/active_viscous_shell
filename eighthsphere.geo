@@ -11,15 +11,9 @@ Circle(8) = {4,1,2};
 Circle(11) = {3,1,4};
 
 Line Loop(1) = {1,11,8};
-#Line Loop(2) = {2,7,-11};
-#Line Loop(3) = {3,-12,-7};
-#Line Loop(4) = {4,-8,12};
 
+Surface(1) = {1};
 
-Ruled Surface(1) = {1};
-
-
-Volume (1) = {1};
 
 Physical Surface(1) = {1};
 //+
