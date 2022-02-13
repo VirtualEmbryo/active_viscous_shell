@@ -1,6 +1,6 @@
 # Active viscous shell
 
-[![DOI](https://zenodo.org/badge/317295428.svg)](https://zenodo.org/badge/latestdoi/317295428)
+[![DOI](https://zenodo.org/badge/410937659.svg)](https://zenodo.org/badge/latestdoi/410937659)
 [![fenics](https://img.shields.io/badge/Fenics-2019.1.0-blue.svg)](https://fenicsproject.org) 
 
 `active_viscous_shell` is distributed as a supplemental material to the paper:
