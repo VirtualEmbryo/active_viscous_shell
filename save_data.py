@@ -1,5 +1,5 @@
 import numpy as np
-from dolfin import assemble, MeshFunction, AutoSubDomain, near, ds, Function
+from dolfin import assemble, Constant, MeshFunction, AutoSubDomain, near, ds, dx, Function
 from ufl import dot, pi
 
 
@@ -24,6 +24,7 @@ def save_data(filename, time, problem):
     Furrow_thickness = assemble(
         problem.thickness * (2.0 / (pi * current_radius)) * dss(1)(domain=problem.mesh)
     )
+    thickness = assemble(problem.thickness*problem.dx(domain = problem.mesh))/assemble(Constant(1.0)*dx(domain = problem.mesh))
 
     #            furrow_radius = np.append(furrow_radius, current_radius )
     print("radius of the furrow:", current_radius)
@@ -77,7 +78,7 @@ def save_data(filename, time, problem):
             bending_active_dissipation,
             bending_polymerization,
             dissipation_shear,
-            Furrow_thickness,
+            thickness,
             Pressure_,
         )
     )
