@@ -391,6 +391,8 @@ class ActiveShell:
 
         self.a0_contra = inv(self.a0)
         self.H = 0.5 * inner(self.a0_contra, self.b0)
+        self.G = det(self.b0*self.a0)
+
 
     def set_kinematics(self):
         self.F0 = self.grad_(self.phi0)
@@ -436,10 +438,10 @@ class ActiveShell:
         )
 
         self.Q_field = interpolate(self.Q_Expression, self.V_thickness)
-        self.q_11, self.q_12, self.q_22, self.q_33 = 1.0 / 6, 0.0, 1.0 / 6, -1.0 / 3
-        self.Q_tensor = as_tensor([[1.0 / 6, 0.0], [0.0, 1.0 / 6]])
+        self.q_11, self.q_12, self.q_22, self.q_33 = 1.0 / 6, 0.0, 1.0 / 6, - 1.0 / 3
+        self.Q_tensor = as_tensor([[1.0 / 6 , 0.0], [0.0, 1.0 / 6 ]])
 
-        i, j, l, m = Index(), Index(), Index(), Index()
+        i, j, l, m, k, q = Index(), Index(), Index(), Index(), Index(), Index()
         A_ = as_tensor(
             (
                 0.5 * self.a0_contra[i, j] * self.a0_contra[l, m]
@@ -451,27 +453,75 @@ class ActiveShell:
             ),
             [i, j, l, m],
         )
-        C_active = as_tensor(
-            self.Q_tensor[l, m]
-            * (
-                self.H
-                * (
-                    self.a0_contra[i, l] * self.a0_contra[j, m]
-                    + self.a0_contra[j, l] * self.a0_contra[i, m]
-                )
-                + self.a0_contra[i, j] * self.b0[m, l]
-                - 0.75
-                * (
-                    self.a0_contra[i, m] * self.b0[j, l]
-                    + self.a0_contra[i, l] * self.b0[j, m]
-                    + self.a0_contra[j, m] * self.b0[i, l]
-                    + self.a0_contra[j, l] * self.b0[i, m]
-                )
-            )
-            + (self.b0[i, j] - 4 * self.H * self.a0_contra[i, j]) * self.q_33,
-            [i, j],
-        )
 
+        
+        C_active = as_tensor(
+            self.Q_tensor[l,m]
+            * (
+                self.H * (
+                            self.a0_contra[i,l] * self.a0_contra[j,m] +
+                            self.a0_contra[j,l] * self.a0_contra[i,m]
+                            )
+                + self.a0_contra[i,j] * self.b0[m,l] - \
+                0.75 * (
+                        self.a0_contra[i,m] * self.b0[j,l] +
+                        self.a0_contra[i,l] * self.b0[j,m] +
+                        self.a0_contra[j,m] * self.b0[i,l] +
+                        self.a0_contra[j,l] * self.b0[i,m]
+                        )
+            )
+            ,[i,j])
+            
+            
+        # Crossed terms
+        self.CT_passive = inner(
+            (self.thickness**3/12.0)
+            * self.mu
+            * as_tensor(
+                    (
+                    8 * self.H * A_[i, j, l, m] -
+                    - self.a0_contra[i,j] * self.b0[m,l]
+                    - 5 * self.a0_contra[m,l] * self.b0[i,j] -
+                    1.5  *  (
+                            self.a0_contra[i,m] * self.b0[j,l] +
+                            self.a0_contra[i,l] * self.b0[j,m] +
+                            self.a0_contra[j,m] * self.b0[i,l] +
+                            self.a0_contra[j,l] * self.b0[i,m]
+                            )
+                    ) * self.membrane_deformation()[l, m]
+                    ,[i,j]
+                    )
+        ,self.bending_deformation()
+        )
+        
+        self.CT_polymerization = (
+            (self.thickness**3/12.0)
+            * self.mu
+            * inner(
+                      as_tensor(
+                                2 * (self.G - self.H**2) * self.a0_contra[i,j]
+                                + 6 * self.H * self.b0[i,j]
+                                + 10 * self.a0[m,l] * self.b0[i,m] * self.b0[j,l]
+                                ),
+                        self.membrane_deformation()[i,j]
+                    )
+        
+        )
+        
+        self.CT_active = inner(
+            (self.thickness**3/12.0)
+            * self.Q_field *
+            as_tensor(self.Q_tensor[l,m]
+                    *(
+                    self.G * self.a0_contra[i,j] * self.a0_contra[m,l]
+                    - 4 * self.H * self.b0[i,m] * self.a0_contra[j,l]
+                    - self.b0[i,m] * self.b0[j,l]
+                    - 3 * self.a0_contra[i,m] * self.b0[l,k] * self.b0[j,q] * self.a0[k,q]
+                    ), [i, j])
+        , self.membrane_deformation()
+        )
+        
+        self.CT_energy = self.CT_passive + self.CT_active + self.CT_polymerization
         Q_alphabeta = as_tensor(
             (
                 self.a0_contra[i, l] * self.a0_contra[j, m] * self.Q_tensor[l, m]
@@ -497,49 +547,54 @@ class ActiveShell:
 
         self.N = self.N_active + self.N_passive + self.N_polymerization
 
-        self.M = (
+        self.M_passive = (
             (self.thickness ** 3 / 3.0)
             * self.mu
             * as_tensor(A_[i, j, l, m] * self.bending_deformation()[l, m], [i, j])
         )
-
+        
+        self.M_active = (
+            (self.thickness ** 3 / 12.0) * C_active * self.Q_field
+        )
+        
+        self.M_polymerization = (
+            (self.thickness**3/12.0)
+            * self.mu
+            * as_tensor( (6* self.H * self.a0_contra[i,j] + 4 * self.b0[i,j])
+                       * (self.kd - self.vp/self.thickness), [i,j]
+                       )
+        )
+        
+        self.M = self.M_passive + self.M_active + self.M_polymerization
+        
         self.T_shear = (
             self.thickness
             * self.mu
             * as_tensor(self.a0_contra[i, j] * self.shear_deformation()[j], [i])
         )
 
+        
+        
+        # Energies
         self.passive_membrane_energy = inner(
             self.N_passive, self.membrane_deformation()
         )
 
-        self.active_membrane_energy = inner(self.N_active, self.membrane_deformation())
+        self.active_membrane_energy = inner(self.N_active, self.membrane_deformation()) + self.CT_active
 
         self.passive_bending_energy = inner(self.M, self.bending_deformation())
 
-        # does not appear in M...
-        self.active_bending_energy = (self.thickness ** 3 / 12.0) * inner(
-            C_active * self.Q_field, self.bending_deformation()
+        self.active_bending_energy =  inner(
+            self.M_active, self.bending_deformation()
         )
 
-        self.polymerization_membrane = inner(
-            self.N_polymerization, self.membrane_deformation()
-        )
+        self.polymerization_membrane = inner(self.N_polymerization, self.membrane_deformation()) \
+                                        + self.CT_polymerization
 
-        # does not appear in M...
-        self.polymerization_bending = (
-            (self.thickness ** 3 / 3.0)
-            * self.mu
-            * inner(
-                as_tensor(
-                    (self.H * self.a0_contra[i, j] - self.b0[i, j])
-                    * (self.kd - self.vp / self.thickness),
-                    [i, j],
-                ),
-                self.bending_deformation(),
-            )
+        self.polymerization_bending = inner(
+            self.M_polymerization, self.bending_deformation()
         )
-
+        
         self.psi_m = inner(self.N, self.membrane_deformation())
         self.psi_b = inner(self.M, self.bending_deformation())
         self.psi_s = SHEAR_PENALTY * inner(self.T_shear, self.shear_deformation())
@@ -549,7 +604,7 @@ class ActiveShell:
         self.dx = Measure("dx", domain=self.mesh)
 
         # The total elastic energy and its first and second derivatives
-        self.Pi = (self.psi_m + self.psi_b + self.psi_s) * sqrt(self.j0) * self.dx
+        self.Pi = (self.psi_m + self.psi_b + self.psi_s + self.CT_energy) * sqrt(self.j0) * self.dx
 
         self.dV = Expression(self.dV_expr, t=self.time, degree=0)
         self.Pi = (
@@ -581,7 +636,8 @@ class ActiveShell:
 
         # Update mesh position with current displacement
         ALE.move(self.mesh, displacement_mesh)
-
+        self.initialize()
+        
     def solve(self):
         self.set_solver()
         problem = CustomNonlinearProblem(self.dPi, self.J, self.bcs)
