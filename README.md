@@ -23,7 +23,7 @@ See the [Theory and implementation](theory_implementation.md) document.
 > ```
 
 * the **`mmgs`** application of the MMG library, [Download here](http://www.mmgtools.org/mmg-remesher-downloads).
-* 
+
 ## Usage
 
 First, you should specify in the `paths.json` files the path corresponding to the `gmsh` and `mmgs_O3` application on your system such as:
