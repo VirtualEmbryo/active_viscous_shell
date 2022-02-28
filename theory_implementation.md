@@ -69,7 +69,7 @@ $$
         -\cos \beta_{01} & 0 \\
         -\sin \beta_{01} \cos \beta_{02} &- \cos \beta_{01} \sin \beta_{02}
         \end{bmatrix} 
-        \dot{\boldsymbol{\beta}}= \boldsymbol{Q}(\boldsymbol{\beta}_0)\dot{\boldsymbol{\beta}}
+        \dot{\boldsymbol{\beta}}= \boldsymbol{W}(\boldsymbol{\beta}_0)\dot{\boldsymbol{\beta}}
 $$
 
 As a result, we have a 5-dof system to solve at each time step: three velocity components: $\boldsymbol{U} = (U_1, U_2, U_3)$ and two angular rates of change: $\dot{\boldsymbol{\beta}}=(\dot{\beta}_1,\dot{\beta}_2)$.
